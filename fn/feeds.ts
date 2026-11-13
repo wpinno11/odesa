@@ -155,15 +155,23 @@ export async function bills(query: string, state = "ALL") {
 }
 
 // ---------------------------------------------------------------- SEC EDGAR (no key; the SEC asks for a contact in the request header, kept in odesa.kv)
-let _cik: Record<string, string> | null = null;
+let _cik: Record<string, string> | null = null; let _names: { t: string; n: string }[] = [];
 async function secHeaders() { return { "User-Agent": String(await kvGet("sec_contact", "Odesa personal research app")) }; }
 export const SEC = {
   async cik(t: string) {
     if (!_cik) {
       const r = await call("sec", "https://www.sec.gov/files/company_tickers.json", { headers: await secHeaders() });
-      _cik = {}; for (const v of Object.values(r ?? {}) as any[]) _cik[String(v.ticker).toUpperCase()] = String(v.cik_str).padStart(10, "0");
+      _cik = {}; _names = [];
+      for (const v of Object.values(r ?? {}) as any[]) { const t = String(v.ticker).toUpperCase(); if (!_cik[t]) { _cik[t] = String(v.cik_str).padStart(10, "0"); _names.push({ t, n: String(v.title ?? "") }); } }
     }
     return _cik[t.toUpperCase()] ?? null;
+  },
+  /** Company-name search (the SEC's ticker list, in order of size). */
+  async search(q: string, limit = 8) {
+    await SEC.cik("AAPL"); const w = q.toLowerCase().trim(); if (!w) return [];
+    const starts = _names.filter((x) => x.n.toLowerCase().startsWith(w) || x.t.toLowerCase() === w);
+    const has = _names.filter((x) => !starts.includes(x) && x.n.toLowerCase().includes(w));
+    return [...starts, ...has].slice(0, limit);
   },
   async filings(t: string, forms = ["8-K", "10-K", "10-Q"], limit = 8) {
     const c = await SEC.cik(t); if (!c) return [];

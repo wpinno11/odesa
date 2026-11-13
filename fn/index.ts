@@ -207,11 +207,8 @@ async function route(c: Ctx): Promise<unknown> {
 
   // ---------------- research
   if (a === "stock") return d === "summary" ? await R.summary(String(b), c.q.get("force") === "1") : await R.stock(String(b));
-  if (a === "search") {
-    const q = String(c.q.get("q") ?? "").trim(); if (!q) return [];
-    if (/^[A-Za-z.\-]{1,6}$/.test(q)) { const qq = await MD.quotes([q]).catch(() => ({} as any)); if (qq[q.toUpperCase()]) return [{ t: q.toUpperCase(), ...qq[q.toUpperCase()] }]; }
-    return [];
-  }
+  if (a === "research" && b) return d === "street" ? await R.street(String(b)) : await R.profile(String(b));
+  if (a === "search") return await R.search(String(c.q.get("q") ?? ""));
 
   // ---------------- Opal
   if (a === "opal") {
