@@ -63,7 +63,9 @@ const _px = new Map<string, { at: number; v: [string, number][] }>();
 async function closes(t: string): Promise<[string, number][]> {
   const c = _px.get(t); if (c && Date.now() - c.at < 30 * 60000) return c.v;
   const rows = await MD.candlesFrom(t, yearsAgo(10) );
-  const v = rows.map((k: any) => [dOf(Number(k.t)), Number(k.c)] as [string, number]).filter((x) => x[1] > 0);
+  let v = rows.map((k: any) => [dOf(Number(k.t)), Number(k.c)] as [string, number]).filter((x) => x[1] > 0);
+  // a ticker can be reused by a new company: start after the last long gap in trading (more than 3 weeks)
+  for (let i = v.length - 1; i > 0; i--) if (Date.parse(v[i][0]) - Date.parse(v[i - 1][0]) > 21 * 86400000) { v = v.slice(i); break; }
   _px.set(t, { at: Date.now(), v }); return v;
 }
 function retOver(px: [string, number][], years: number) {
@@ -155,7 +157,7 @@ export async function profile(t: string) {
   return {
     ticker: t, kind: isFund ? "fund" : "stock", name: S.name || info?.full_name || u.name || t, about: S.about ?? null, logo: info?.logo ?? null,
     sector: isFund ? (S.fund?.asset_class ?? "Fund") : (u.sector ?? info?.sector ?? null), industry: u.industry ?? null, mcap: nn(u.mcap) ?? nn(info?.marketcap),
-    quote: qq, last, beta: nn(u.beta) ?? nn(info?.beta), pe: !isFund && ro.eps && last ? last / ro.eps : nn(fw.pe), fpe: nn(fw.fpe), dy: nn(u.dy) ?? nn(sc.dividend_yield),
+    quote: qq, last, beta: nn(u.beta) ?? nn(info?.beta), pe: !isFund && ro.eps && last ? last / ro.eps : nn(fw.pe), fpe: nn(fw.fpe), dy: info?.has_dividend === false ? 0 : (nn(u.dy) ?? nn(sc.dividend_yield)),
     short: nn(u.short), next_er: nextEr, range,
     prices: thin(px), spy: thin(spy), returns: { t: R(px), spy: R(spy) }, history_from: px[0]?.[0] ?? null,
     fin: isFund ? null : fin, street: S.at ? S : null, street_pending: st.pending,
@@ -174,6 +176,6 @@ export async function search(q: string) {
   if (/^[A-Za-z.\-]{1,6}$/.test(q)) { const qq = await safe(MD.quotes([up]), {} as any); if (qq[up]) out.push({ t: up, n: "", ...qq[up] }); }
   const byName = await safe(SEC2.search(q, 8), [] as any[]);
   for (const x of byName) if (!out.find((o) => o.t === x.t)) out.push({ t: x.t, n: x.n });
-  if (/^[A-Za-z]{2,6}$/.test(q) && !out.find((o) => o.t === up)) out.unshift({ t: up, n: /^[A-Z]{4}X$/.test(up) ? "Mutual fund" : "Open this symbol" });
+  if (/^[A-Za-z]{2,6}$/.test(q) && !out.length) out.unshift({ t: up, n: /^[A-Z]{4}X$/.test(up) ? "Mutual fund" : "Open this symbol" });
   return out.slice(0, 10);
 }
