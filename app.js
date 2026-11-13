@@ -164,6 +164,7 @@ async function vPortfolio(id) {
         <a class="card" href="#calc/${m.id}" style="margin:0;text-decoration:none;color:inherit;text-align:center;padding:14px 6px"><div style="font-size:22px">🧮</div><div class="small" style="font-weight:600;margin-top:4px">Share calculator</div></a>
         <a class="card" href="#rebalance/${m.id}" style="margin:0;text-decoration:none;color:inherit;text-align:center;padding:14px 6px"><div style="font-size:22px">⚖️</div><div class="small" style="font-weight:600;margin-top:4px">Rebalance</div></a>
         <a class="card" href="#manager/${m.id}" style="margin:0;text-decoration:none;color:inherit;text-align:center;padding:14px 6px"><div style="font-size:22px">✏️</div><div class="small" style="font-weight:600;margin-top:4px">Edit model</div></a></div>
+      <div id="p-perf">${h.length ? `<div class="card" style="margin-top:12px;height:120px"></div>` : ""}</div>
       <div class="card pad0" style="margin-top:12px">
         <div class="row between" style="padding:12px 0 6px"><h2 class="h2">${esc(m.name)}</h2><span class="small ${tot === 10000 ? "up" : "down"}">${h.length} holdings · ${F.bps(tot)}</span></div>
         ${h.length ? h.map((x) => { const qq = q[x.t] || {}; return `<a class="li" href="${x.cash ? "#" : "#stock/" + esc(x.t)}">${x.cash ? `<span class="logo" style="display:flex;align-items:center;justify-content:center">💵</span>` : logo(x.t)}
@@ -172,9 +173,227 @@ async function vPortfolio(id) {
           <div class="n" style="width:56px;text-align:right;font-weight:700">${F.bps(x.w)}</div></a>`; }).join("")
         : `<div class="empty">This model has no holdings yet.<br><a href="#manager/${m.id}" class="btn primary" style="margin-top:12px">Add holdings</a></div>`}</div>
       <div class="sec"><h2 class="h2">Watchlist</h2><a href="#watchlist" class="small" style="font-weight:600;text-decoration:none">Edit</a></div><div id="p-watch" class="card pad0">${spinner()}</div>`);
+    if (h.length) perfCard(m);
     api("/watchlist").then((w) => fill("#p-watch", w.map((x) => `<a class="li" href="#stock/${esc(x.t)}">${logo(x.t, 30)}<div class="grow1" style="font-weight:700">${esc(x.t)}</div>
       <div class="n" style="font-weight:600">${F.px(x.last)}</div><div class="n small ${F.cls(x.changepct)}" style="width:64px;text-align:right">${F.chg(x)}</div></a>`).join("") || `<div class="empty">Empty.</div>`)).catch((e) => fill("#p-watch", err(e)));
   } catch (e) { fill("#p-body", err(e)); }
+}
+
+// ---------------------------------------------------------------- Track record ($1M hypothetical), compare, stats
+const PERIODS = [["1D", 0], ["1W", 7], ["1M", 30], ["3M", 91], ["YTD", -1], ["1Y", 365], ["All", null]];
+const isoAdd = (d, n) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const todayET = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+/** Daily points incl. today's live value. */
+function perfSeries(p) { return [...p.points, ...(p.live ? [{ d: p.live.d, nav: p.live.nav, live: true }] : [])]; }
+function periodCut(key) {
+  const t = todayET(); const P = PERIODS.find((x) => x[0] === key);
+  if (!P || P[1] === null || P[1] === 0) return null; if (P[1] === -1) return isoAdd(t.slice(0, 4) + "-01-01", -1); return isoAdd(t, -P[1]);
+}
+function periodsAvailable(p) { const start = p.points[0].d; return PERIODS.filter(([k, n]) => n === null || n === 0 || (periodCut(k) && start <= periodCut(k))).map((x) => x[0]); }
+function slicePeriod(series, key) { const c = periodCut(key); if (!c) return series; let i = 0; for (let k = 0; k < series.length; k++) if (series[k].d <= c) i = k; return series.slice(i); }
+const PLABEL = { "1D": "Today", "1W": "Past week", "1M": "Past month", "3M": "Past 3 months", YTD: "This year", "1Y": "Past year", All: "Since start" };
+
+/** Clean line chart with touch scrubbing. series: [{ pts:[{x, y, label}], color, dash, fill }] */
+function lineChart(el, series, { h = 210, onScrub, baseline } = {}) {
+  const W = Math.max(280, el.clientWidth || 340), H = h, pad = { l: 2, r: 2, t: 14, b: 22 };
+  const all = series.flatMap((s) => s.pts.map((p) => p.y)).concat(baseline !== undefined ? [baseline] : []);
+  let lo = Math.min(...all), hi = Math.max(...all); if (hi - lo < 1e-9) { hi += 1; lo -= 1; } const padY = (hi - lo) * 0.08; lo -= padY; hi += padY;
+  const n = Math.max(...series.map((s) => s.pts.length));
+  const X = (i) => pad.l + (n <= 1 ? (W - pad.l - pad.r) / 2 : i * (W - pad.l - pad.r) / (n - 1)), Y = (v) => pad.t + (hi - v) / (hi - lo) * (H - pad.t - pad.b);
+  const path = (s) => s.pts.map((p, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(p.y).toFixed(1)}`).join(" ");
+  const gid = "g" + Math.random().toString(36).slice(2, 7);
+  const main = series[0];
+  const xl = main.pts.length > 1 ? [0, Math.floor((main.pts.length - 1) / 2), main.pts.length - 1].map((i) => `<text x="${Math.min(W - 34, Math.max(34, X(i)))}" y="${H - 5}" text-anchor="middle" font-size="11" fill="var(--gray2)">${esc(main.pts[i].label || "")}</text>`).join("") : "";
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="display:block;touch-action:pan-y" role="img" aria-label="Value chart">
+    <defs><linearGradient id="${gid}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${main.color}" stop-opacity=".18"/><stop offset="1" stop-color="${main.color}" stop-opacity="0"/></linearGradient></defs>
+    ${baseline !== undefined ? `<line x1="0" x2="${W}" y1="${Y(baseline)}" y2="${Y(baseline)}" stroke="#D5D7DB" stroke-dasharray="3 4"/>` : ""}
+    ${main.pts.length > 1 ? `<path d="${path(main)} L${X(main.pts.length - 1)},${H - pad.b} L${X(0)},${H - pad.b} Z" fill="url(#${gid})"/>` : ""}
+    ${series.slice().reverse().map((s) => s.pts.length > 1 ? `<path d="${path(s)}" fill="none" stroke="${s.color}" stroke-width="${s.dash ? 1.8 : 2.4}" ${s.dash ? 'stroke-dasharray="5 4"' : ""} stroke-linejoin="round" stroke-linecap="round"/>` : `<circle cx="${X(0)}" cy="${Y(s.pts[0].y)}" r="4" fill="${s.color}"/>`).join("")}
+    ${(main.marks || []).map((i) => `<circle cx="${X(i)}" cy="${Y(main.pts[i].y)}" r="4" fill="#fff" stroke="var(--brass)" stroke-width="2"/>`).join("")}
+    ${xl}<g class="scrub" style="display:none"><line y1="${pad.t - 6}" y2="${H - pad.b}" stroke="var(--gray2)" stroke-width="1"/>${series.map((s) => `<circle r="5" fill="${s.color}" stroke="#fff" stroke-width="2"/>`).join("")}</g></svg>`;
+  const svg = el.querySelector("svg"), g = svg.querySelector(".scrub");
+  const at = (ev) => { const r = svg.getBoundingClientRect(); const x = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left) / r.width * W; return Math.max(0, Math.min(n - 1, Math.round((x - pad.l) / ((W - pad.l - pad.r) / Math.max(1, n - 1))))); };
+  const show = (i) => { g.style.display = ""; g.querySelector("line").setAttribute("x1", X(i)); g.querySelector("line").setAttribute("x2", X(i));
+    g.querySelectorAll("circle").forEach((c, k) => { const p = series[k].pts[Math.min(i, series[k].pts.length - 1)]; if (!p) return; c.setAttribute("cx", X(Math.min(i, series[k].pts.length - 1))); c.setAttribute("cy", Y(p.y)); });
+    onScrub && onScrub(i); };
+  const hide = () => { g.style.display = "none"; onScrub && onScrub(null); };
+  if (n > 1) { svg.addEventListener("pointermove", (e) => show(at(e))); svg.addEventListener("pointerdown", (e) => show(at(e))); svg.addEventListener("pointerleave", hide); svg.addEventListener("pointerup", (e) => { if (e.pointerType !== "mouse") hide(); }); }
+}
+
+/** Small card on the Portfolio screen. */
+async function perfCard(m) {
+  try {
+    const p = await api("/perf/" + m.id); const s = perfSeries(p); const last = s[s.length - 1];
+    const prevNav = p.points[p.points.length - 1].nav; const dayRet = p.live ? p.live.ret : (p.points.length > 1 ? p.points[p.points.length - 1].ret : 0);
+    const total = last.nav / 1e6 - 1; const vals = s.map((x) => x.nav);
+    fill("#p-perf", `<a class="card" href="#perf/${m.id}" style="display:block;text-decoration:none;color:inherit;margin-top:12px">
+      <div class="row between"><div class="eyebrow">Track record · $1M hypothetical</div><span class="muted">›</span></div>
+      <div class="row between" style="margin-top:8px;align-items:flex-end"><div><div class="big n">${F.usd(last.nav).replace(/\.\d\d$/, "")}</div>
+        <div class="n small ${F.cls(dayRet)}" style="font-weight:600;margin-top:4px">${F.pct(dayRet * 100)} ${p.live ? "today" : p.points.length > 1 ? "last session" : ""}</div></div>
+        <div style="text-align:right">${vals.length > 1 ? spark(vals, 110, 40, total >= 0) : `<div class="tiny muted" style="max-width:150px">${p.trading_day && p.now_mins < 570 ? "Starts at today's 9:30 open" : "Starts at the next open"}</div>`}
+        <div class="tiny muted n" style="margin-top:4px">${F.pct(total * 100)} since ${F.date(p.inception.slice(0, 10))}</div></div></div></a>`);
+  } catch (e) { fill("#p-perf", ""); }
+}
+
+async function vPerf(id) {
+  page(`${hdr("Track record", { back: "#portfolio/" + id })}<div id="pf-body">${spinner()}</div>`, "portfolio");
+  const st = { period: null, vs: "", window: "since", cmp: null, statsTab: "val", stats: null, intra: null };
+  let p, ms;
+  try { [p, ms] = await Promise.all([api("/perf/" + id), getModels()]); } catch (e) { return fill("#pf-body", err(e)); }
+  const avail = periodsAvailable(p);
+  st.period = p.live || (p.trading_day && p.now_mins >= 570) ? "1D" : "All";
+  const draw = async () => {
+    const backtest = st.cmp && st.cmp.backtest;
+    const vsLabel = st.cmp && st.cmp.b ? st.cmp.b.label : "";
+    fill("#pf-body", `
+      <div style="padding:14px 20px 0"><div class="small muted">${esc(p.name)} · $1,000,000 hypothetical, started ${new Date(p.inception).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+        <div class="big n" id="pf-val" style="font-size:40px;margin-top:6px">–</div>
+        <div class="n" id="pf-chg" style="font-size:16px;font-weight:600;margin-top:6px">&nbsp;</div>
+        <div class="small muted" id="pf-when" style="margin-top:2px">&nbsp;</div></div>
+      <div class="card" style="padding:10px 6px 4px"><div id="pf-chart"></div></div>
+      ${backtest ? "" : `<div class="seg light" style="margin:12px 16px 0">${avail.map((k) => `<button class="${st.period === k ? "on" : ""}" data-p="${k}">${k}</button>`).join("")}</div>`}
+      <div class="row" style="margin:12px 16px 0;gap:8px;flex-wrap:wrap">
+        <button class="chip ${st.cmp && st.cmp.b ? "on" : ""}" id="pf-cmp">${st.cmp && st.cmp.b ? "Compared with " + esc(vsLabel) : "＋ Compare"}</button>
+        ${st.window !== "since" ? `<span class="chip on">What-if · ${esc(st.window)}</span>` : ""}
+        ${st.cmp ? `<button class="chip" id="pf-clear">Clear</button>` : ""}</div>
+      ${backtest ? `<p class="tiny muted" style="margin:8px 20px 0;line-height:1.4">What-if: today's weights held for the whole ${esc(st.window)}, rebalanced to target every day. This is a backtest, not the model's real record.</p>` : ""}
+      <div id="pf-legend"></div>
+      <div class="sec"><h2 class="h2">Model stats</h2><span class="small muted">${st.cmp && st.cmp.b ? "vs " + esc(vsLabel) : ""}</span></div>
+      <div class="seg light" style="margin:0 16px"><button data-t="val" class="${st.statsTab === "val" ? "on" : ""}">Valuation</button><button data-t="mix" class="${st.statsTab === "mix" ? "on" : ""}">Mix</button><button data-t="risk" class="${st.statsTab === "risk" ? "on" : ""}">Risk</button></div>
+      <div id="pf-stats">${spinner()}</div>
+      <p class="tiny muted" style="margin:14px 20px 0;line-height:1.45">How it's counted: each trading day the model earns the weighted return of its holdings, rebalanced to its targets. Finished days are locked after 5 pm and never change. Edits start counting the next trading day (or today, if made before the 9:30 open). Cash earns ${F.pct((p.cash_yield ?? 0.04) * 100, 1, false)} a year. Price returns only; dividends aren't added.</p>`);
+    $$("[data-p]").forEach((b) => b.onclick = () => { st.period = b.dataset.p; draw(); });
+    $$("[data-t]").forEach((b) => b.onclick = () => { st.statsTab = b.dataset.t; draw(); });
+    $("#pf-cmp").onclick = () => compareSheet();
+    const cl = $("#pf-clear"); if (cl) cl.onclick = () => { st.vs = ""; st.window = "since"; st.cmp = null; st.stats = null; draw(); };
+    await drawChart(); drawStats();
+  };
+  const drawChart = async () => {
+    const el = $("#pf-chart"); if (!el) return;
+    const val = $("#pf-val"), chg = $("#pf-chg"), when = $("#pf-when");
+    const setHero = (nav, from, label, color) => { val.textContent = F.usd(nav).replace(/\.\d\d$/, ""); const d = nav - from, r = from ? nav / from - 1 : 0;
+      chg.innerHTML = `<span class="${F.cls(d)}">${d >= 0 ? "+" : "−"}${F.usd(Math.abs(d)).replace(/\.\d\d$/, "")} (${F.pct(r * 100)})</span>`; when.textContent = label; };
+    // 1D: today's 5-minute line
+    if (st.period === "1D" && !(st.cmp && st.cmp.backtest)) {
+      const prev = p.points[p.points.length - 1].nav;
+      if (!st.intra) { el.innerHTML = spinner(); try { st.intra = await api(`/perf/${id}/intraday`); } catch (e) { st.intra = { points: [] }; } }
+      const pts = st.intra.points.map((x) => ({ y: prev * (1 + x.r), label: new Date(x.ts * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) }));
+      if (!pts.length) { const nav = p.live ? p.live.nav : prev; setHero(nav, prev, p.live ? "Today" : "Market closed"); el.innerHTML = `<div class="empty" style="padding:44px 16px">${p.trading_day && p.now_mins < 570 ? "Today's line starts at the 9:30 open." : "No trading yet today. Pick another range."}</div>`; return; }
+      const color = pts[pts.length - 1].y >= prev ? "var(--up)" : "var(--down)";
+      const now = p.live ? p.live.nav : pts[pts.length - 1].y;
+      setHero(now, prev, "Today · live");
+      lineChart(el, [{ pts, color }], { baseline: prev, onScrub: (i) => i === null ? setHero(now, prev, "Today · live") : setHero(pts[i].y, prev, pts[i].label) });
+      $("#pf-legend").innerHTML = ""; return;
+    }
+    let A = st.cmp ? st.cmp.a.points : perfSeries(p), B = st.cmp && st.cmp.b ? st.cmp.b.points : null;
+    if (!(st.cmp && st.cmp.backtest)) { A = slicePeriod(A, st.period); if (B) { const d0 = A[0].d; const j = B.findIndex((x) => x.d >= d0); B = j >= 0 ? B.slice(j) : B; } }
+    const a0 = A[0].nav, b0 = B && B.length ? B[0].nav : 1;
+    const lab = (d) => F.date(d);
+    const ptsA = A.map((x) => ({ y: x.nav, label: x.start ? "Start" : lab(x.d) + (x.live ? " · live" : ""), d: x.d }));
+    const ptsB = B ? B.map((x) => ({ y: x.nav / b0 * a0, label: lab(x.d) })) : null;
+    const last = ptsA[ptsA.length - 1]; const up = last.y >= a0; const color = up ? "var(--up)" : "var(--down)";
+    const baseLabel = st.cmp && st.cmp.backtest ? `What-if, past ${st.window}` : PLABEL[st.period] || "";
+    setHero(last.y, a0, baseLabel);
+    const marks = (p.changes || []).map((c) => { const d = new Date(c.at); const ds = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d); return ptsA.findIndex((x) => x.d >= ds); }).filter((i) => i > 0);
+    lineChart(el, [{ pts: ptsA, color, marks: st.cmp && st.cmp.backtest ? [] : marks }, ...(ptsB ? [{ pts: ptsB, color: "var(--brass)", dash: true }] : [])], {
+      baseline: a0, onScrub: (i) => { if (i === null) return setHero(last.y, a0, baseLabel); setHero(ptsA[i].y, a0, ptsA[i].label); legend(i); } });
+    const legend = (i) => { if (!ptsB) { $("#pf-legend").innerHTML = marks.length ? `<p class="tiny muted" style="margin:8px 20px 0">○ marks a day the model's weights changed.</p>` : ""; return; }
+      const ia = i ?? ptsA.length - 1, ib = Math.min(i ?? ptsB.length - 1, ptsB.length - 1);
+      const ra = ptsA[ia].y / a0 - 1, rb = ptsB[ib].y / a0 - 1;
+      $("#pf-legend").innerHTML = `<div class="card" style="padding:12px 16px"><div class="row between"><span class="row small" style="gap:8px"><i style="width:16px;height:3px;border-radius:2px;background:${color};display:inline-block"></i>${esc(st.cmp.a.label)}</span><b class="n ${F.cls(ra)}">${F.pct(ra * 100)}</b></div>
+        <div class="row between" style="margin-top:8px"><span class="row small" style="gap:8px"><i style="width:16px;height:0;border-top:2px dashed var(--brass);display:inline-block"></i>${esc(st.cmp.b.label)}</span><b class="n ${F.cls(rb)}">${F.pct(rb * 100)}</b></div>
+        <div class="row between small" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)"><span class="muted">Difference</span><b class="n ${F.cls(ra - rb)}">${F.pct((ra - rb) * 100)}</b></div>
+        ${st.cmp.notes && st.cmp.notes.length ? `<p class="tiny muted" style="margin:8px 0 0">${st.cmp.notes.map(esc).join(" ")}</p>` : ""}</div>`; };
+    legend(null);
+  };
+  const compareSheet = () => {
+    const others = ms.filter((x) => String(x.id) !== String(id));
+    const opts = [...(p.changes && p.changes.length ? [["current", "This model's current mix", "What today's weights would have done"]] : []),
+      ...others.map((x) => ["model:" + x.id, x.name, "Another of your models"]), ["SPY", "S&P 500", "SPY"], ["QQQ", "Nasdaq 100", "QQQ"], ["IWM", "Russell 2000", "Small caps (IWM)"]];
+    let vs = st.vs || (others.length ? "model:" + others[0].id : "SPY"), win = st.window;
+    const s = sheet(`<div style="padding:0 18px"><h2 class="h2">Compare</h2>
+      <div class="eyebrow" style="margin-top:14px">With</div><div id="cv" style="margin-top:6px"></div>
+      <div class="eyebrow" style="margin-top:16px">Over</div>
+      <div class="chips" style="padding:8px 0 0;flex-wrap:wrap" id="cw"></div>
+      <p class="tiny muted" id="cwn" style="line-height:1.4;margin:8px 0 0"></p>
+      <button class="btn primary" id="cgo" style="margin-top:14px">Show</button></div>`);
+    const paint = () => {
+      $("#cv", s).innerHTML = opts.map(([k, a, b]) => `<button class="li" data-v="${esc(k)}" style="width:100%;background:none;border:0;text-align:left;cursor:pointer;padding:10px 0"><div class="grow1"><div style="font-weight:600">${esc(a)}</div><div class="tiny muted">${esc(b)}</div></div><span style="font-size:20px;color:${vs === k ? "var(--navy)" : "#D5D7DB"}">${vs === k ? "●" : "○"}</span></button>`).join("");
+      $("#cw", s).innerHTML = [["since", "Since start"], ["1M", "1M"], ["3M", "3M"], ["6M", "6M"], ["1Y", "1Y"], ["3Y", "3Y"], ["5Y", "5Y"]].map(([k, l]) => `<button class="chip ${win === k ? "on" : ""}" data-w="${k}">${l}</button>`).join("");
+      $("#cwn", s).textContent = win === "since" ? "The model's real record next to what the other choice would have done over the same days." : "What-if: both mixes held at today's weights for the whole period, as if you'd owned them back then.";
+      s.querySelectorAll("[data-v]").forEach((b) => b.onclick = () => { vs = b.dataset.v; paint(); });
+      s.querySelectorAll("[data-w]").forEach((b) => b.onclick = () => { win = b.dataset.w; paint(); });
+    };
+    paint();
+    $("#cgo", s).onclick = async () => { $("#cgo", s).disabled = true; $("#cgo", s).innerHTML = '<span class="spin"></span>';
+      try { st.cmp = await api(`/perf/${id}/compare?vs=${encodeURIComponent(vs)}&window=${win}`); st.vs = vs; st.window = win; st.stats = null; if (win === "since" && st.period === "1D") st.period = "All"; s.remove(); draw(); }
+      catch (e) { toast(e.message, 4000); $("#cgo", s).disabled = false; $("#cgo", s).textContent = "Show"; } };
+  };
+  const drawStats = async () => {
+    const el = $("#pf-stats"); if (!el) return;
+    if (!st.stats) { el.innerHTML = spinner("Gathering stats"); try { st.stats = await api(`/perf/${id}/stats${st.vs ? "?vs=" + encodeURIComponent(st.vs) : ""}`); } catch (e) { el.innerHTML = err(e); return; }
+      if ((st.stats.a.fwd_pending || (st.stats.b && st.stats.b.fwd_pending)) && !st.retried) { st.retried = true; setTimeout(() => { if ($("#pf-stats")) { st.stats = null; drawStats(); } }, 45000); } }
+    if (!$("#pf-stats")) return;
+    el.innerHTML = statsHtml(st.stats, st.statsTab);
+  };
+  draw();
+}
+function statsHtml(S, tab) {
+  const a = S.a, b = S.b;
+  const x = (n) => n === null || n === undefined || isNaN(n) ? "–" : n.toFixed(1) + "×";
+  const pc = (n, d = 1) => n === null || n === undefined || isNaN(n) ? "–" : F.pct(n * 100, d, false);
+  const sp = (n, d = 1) => n === null || n === undefined || isNaN(n) ? "–" : F.pct(n * 100, d);
+  const num2 = (n) => n === null || n === undefined || isNaN(n) ? "–" : n.toFixed(2);
+  const row = (label, sub, fa, fb, cls) => `<div class="row between" style="padding:11px 0;border-top:1px solid var(--line)"><div class="grow1" style="padding-right:10px"><div style="font-weight:600;font-size:15px">${label}</div>${sub ? `<div class="tiny muted" style="margin-top:2px">${sub}</div>` : ""}</div>
+    <div class="n" style="font-weight:700;font-size:16px;min-width:72px;text-align:right" ${cls ? `class="${cls(fa)}"` : ""}>${fa}</div>${b ? `<div class="n" style="font-weight:600;font-size:15px;min-width:72px;text-align:right;color:var(--brass-t)">${fb}</div>` : ""}</div>`;
+  const head = b ? `<div class="row between tiny" style="padding:0 0 8px"><span></span><span class="row" style="gap:0"><b style="min-width:72px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:90px">${esc(a.label)}</b><b style="min-width:72px;text-align:right;color:var(--brass-t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:90px">${esc(b.label)}</b></span></div>` : "";
+  const cover = (o) => o && o.cover < 0.95 ? `covers ${Math.round(o.cover * 100)}% of the model` : "";
+  if (tab === "val") {
+    const V = a.valuation, U = b ? b.valuation : {};
+    const pend = a.fwd_pending || (b && b.fwd_pending);
+    return `<div class="card">${head}
+      ${row("P/E", ["Trailing 12 months", cover(V.pe), V.pe.neg > 0 ? `${Math.round(V.pe.neg * 100)}% in money-losing companies` : ""].filter(Boolean).join(" · "), x(V.pe.v), x(U.pe && U.pe.v))}
+      ${row("Forward P/E", pend ? "Being gathered from analyst estimates. Check back in a minute." : ["Next 12 months, analyst consensus", cover(V.fpe)].filter(Boolean).join(" · "), x(V.fpe.v), x(U.fpe && U.fpe.v))}
+      ${row("Price / sales", cover(V.ps), x(V.ps.v), x(U.ps && U.ps.v))}
+      ${row("Dividend yield", "Cash counted at its yield", pc(V.dy.v, 2), pc(U.dy && U.dy.v, 2))}
+      ${row("Earnings growth", "Median holding, past year", sp(V.epsg.v, 0), sp(U.epsg && U.epsg.v, 0))}
+      ${row("Below 52-week high", "Weighted average", sp(V.off_hi.v), sp(U.off_hi && U.off_hi.v))}
+      <p class="tiny muted" style="margin:10px 0 0;line-height:1.4">P/E figures are averaged the standard way (as earnings yields), so one very expensive stock can't swamp the total. Trailing earnings from ROIC; forward estimates gathered weekly from public analyst consensus.</p></div>`;
+  }
+  if (tab === "mix") {
+    const M = a.mix, N = b ? b.mix : {};
+    const bars = (rows, rowsB) => rows.map((r) => { const rb = rowsB ? (rowsB.find((y) => y.name === r.name) || { w: 0 }).w : null;
+      return `<div style="margin-top:10px"><div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="n"><b>${F.bps(r.w)}</b>${rowsB ? ` <span style="color:var(--brass-t)">· ${F.bps(rb)}</span>` : ""}</span></div>
+        <div style="height:8px;border-radius:4px;background:var(--soft);margin-top:5px;position:relative;overflow:hidden"><i style="position:absolute;left:0;top:0;bottom:0;width:${r.w / 100}%;background:var(--navy);border-radius:4px"></i></div>
+        ${rowsB ? `<div style="height:4px;border-radius:2px;background:var(--soft);margin-top:3px;position:relative;overflow:hidden"><i style="position:absolute;left:0;top:0;bottom:0;width:${rb / 100}%;background:var(--brass);border-radius:2px"></i></div>` : ""}</div>`; }).join("");
+    const extraB = (rows, rowsB) => rowsB ? rowsB.filter((y) => !rows.find((r) => r.name === y.name)).map((y) => ({ name: y.name, w: 0, _b: y.w })) : [];
+    const secs = [...M.sectors, ...extraB(M.sectors, N.sectors)], sizes = [...M.sizes, ...extraB(M.sizes, N.sizes)];
+    return `<div class="card">${head}
+      ${row("Holdings", "", String(M.n), b ? String(N.n) : "")}
+      ${row("Acts like", "Equal-sized positions, given the weights", M.eff_n.toFixed(1), b ? N.eff_n.toFixed(1) : "")}
+      ${row("Top 5 weight", "", pc(M.top5, 0), b ? pc(N.top5, 0) : "")}
+      ${row("Cash", "", pc(M.cash, 0), b ? pc(N.cash, 0) : "")}
+      ${row("Average company size", "Weighted market value", F.money(M.mcap.v), b ? F.money(N.mcap && N.mcap.v) : "")}</div>
+      <div class="card"><div class="eyebrow">Sectors</div>${bars(secs, b ? N.sectors : null)}</div>
+      <div class="card"><div class="eyebrow">Company size</div>${bars(sizes, b ? N.sizes : null)}
+        <p class="tiny muted" style="margin:10px 0 0">Mega $200B+ · Large $10–200B · Mid $2–10B · Small $300M–2B</p></div>
+      ${a.earnings.length ? `<div class="card"><div class="eyebrow">Earnings in the next 2 weeks</div>${a.earnings.map((e) => `<div class="row between" style="margin-top:8px"><span>${tk(e.t)}</span><span class="small"><b>${F.date(e.d)}</b> <span class="muted">· ${F.bps(e.w)} of model</span></span></div>`).join("")}</div>` : ""}`;
+  }
+  const R = a.risk, Q = b ? b.risk : {};
+  return `<div class="card">${head}
+    <p class="tiny muted" style="margin:0 0 6px;line-height:1.4">Today's weights, held over the past year.</p>
+    ${row("1-year return", "", sp(R.ret), sp(Q.ret))}
+    ${row("Volatility", "How much it swings, per year", pc(R.vol), pc(Q.vol))}
+    ${row("Worst drop", "Peak to bottom", sp(R.mdd), sp(Q.mdd))}
+    ${row("Sharpe ratio", `Return per unit of risk, after ${F.pct(R.rf * 100, 1, false)} cash`, num2(R.sharpe), num2(Q.sharpe))}
+    ${row("Sortino ratio", "Same, counting only down days", num2(R.sortino), num2(Q.sortino))}
+    ${row("Beta", "Moves vs the S&P 500 (1.0 = same)", num2(R.beta ?? R.beta_w), num2(Q.beta ?? Q.beta_w))}
+    ${row("Correlation to S&P 500", "1.0 = moves in lockstep", num2(R.corr), num2(Q.corr))}
+    ${row("Up / down capture", "Share of the S&P's up and down days it catches", R.up_capture ? `${Math.round(R.up_capture * 100)} / ${Math.round(R.down_capture * 100)}` : "–", Q.up_capture ? `${Math.round(Q.up_capture * 100)} / ${Math.round(Q.down_capture * 100)}` : "–")}
+    ${row("Best / worst day", "", R.best !== undefined ? `${sp(R.best)} / ${sp(R.worst)}` : "–", Q.best !== undefined ? `${sp(Q.best)} / ${sp(Q.worst)}` : "–")}
+    ${row("Implied volatility", "What options expect, next 30 days", pc(R.iv), pc(Q.iv))}
+    ${row("Short interest", "Weighted, share of float", pc(R.short), pc(Q.short))}
+    ${R.notes && R.notes.length ? `<p class="tiny muted" style="margin:10px 0 0">${R.notes.map(esc).join(" ")}</p>` : ""}</div>`;
 }
 
 async function vCalc(id) {
@@ -731,7 +950,7 @@ async function enablePush() {
 
 // ---------------------------------------------------------------- router
 const ROUTES = [
-  [/^#?$|^#today$/, vToday], [/^#portfolio(?:\/(\d+))?$/, vPortfolio], [/^#calc\/(\d+)$/, vCalc], [/^#manager(?:\/(\d+))?$/, vManager], [/^#rebalance\/(\d+)$/, vRebalance], [/^#watchlist$/, vWatchlist],
+  [/^#?$|^#today$/, vToday], [/^#portfolio(?:\/(\d+))?$/, vPortfolio], [/^#calc\/(\d+)$/, vCalc], [/^#manager(?:\/(\d+))?$/, vManager], [/^#rebalance\/(\d+)$/, vRebalance], [/^#perf\/(\d+)$/, vPerf], [/^#watchlist$/, vWatchlist],
   [/^#opal$/, vOpal], [/^#opal\/run\/(\d+)$/, vOpalRun], [/^#theses$/, vTheses], [/^#signals(?:\/([A-Z]))?$/, vSignals], [/^#signal\/([A-Z0-9.\-]+)$/, vStock], [/^#earnings$/, vEarnings], [/^#overlay$/, vOverlay], [/^#feeds$/, vFeeds],
   [/^#options$/, vOptions], [/^#options\/new$/, vNewIdea], [/^#options\/tracking$/, vTracking], [/^#options\/results$/, vResults],
   [/^#grow$/, vGrow], [/^#grow\/(\d+)(?:\/([a-z_]+))?(?:\/([A-Za-z]+))?$/, vGrowIdea], [/^#stock\/([A-Za-z0-9.\-]+)$/, vStock], [/^#search$/, vSearch], [/^#settings$/, vSettings],
@@ -743,7 +962,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {

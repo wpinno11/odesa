@@ -137,7 +137,7 @@ export async function track(modelId: number) {
   }
   const changes = W.slice(1).map((w: any) => ({ at: w.eff.toISOString(), n: w.h.length }));
   return { id: m.id, name: m.name, benchmark: m.benchmark || "SPY", inception: W[0].eff.toISOString(), base, points, live, changes,
-    market_open: marketOpen(), trading_day: tradingDay(), now_mins: n.mins };
+    market_open: marketOpen(), trading_day: tradingDay(), now_mins: n.mins, cash_yield: (await cashDaily()).y };
 }
 
 // ---------------------------------------------------------------- today's line (5-minute steps)
