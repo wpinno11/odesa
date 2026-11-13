@@ -210,7 +210,7 @@ function parseList(text) {
   const STOP = new Set(["THE", "AND", "INC", "CORP", "CO", "LTD", "ETF", "FUND", "TOTAL", "CASH", "USD", "PCT", "NAME", "TICKER", "SYMBOL", "WEIGHT", "TARGET", "SHARES", "PRICE", "VALUE", "CLASS", "MY", "IS", "OF"]);
   const TK = /^\$?([A-Z][A-Z0-9]{0,5}(?:[.\-][A-Z])?)$/;
   const out = [], seen = new Set();
-  const lines = String(text).replace(/\r\n?|\u2028|\u2029|\u0085|\v|\f/g, "\n").split(/\n|;/).map((l) => l.replace(/^\s*\d+[.)]\s+/, "").trim()).filter(Boolean);
+  const lines = String(text).replace(/[^\S \t]+/g, "\n").split(/\n|;/).map((l) => l.replace(/^\s*\d+[.)]\s+/, "").trim()).filter(Boolean);
   for (const line of lines) {
     const toks = line.replace(/[()\[\]|•·–—]/g, " ").split(/[\s,\t:]+/).filter(Boolean);
     const tick = toks.map((x, k) => ({ k, m: x.match(TK) })).filter((x) => x.m && !STOP.has(x.m[1]));
@@ -733,5 +733,10 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+const APP_VERSION = 6;
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
+// If a newer version is published, reload once so the phone never keeps an old copy.
+fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {
+  if (v && v.v > APP_VERSION && sessionStorage.getItem("odesa_reloaded") !== String(v.v)) { sessionStorage.setItem("odesa_reloaded", String(v.v)); location.reload(); }
+}).catch(() => {});
 route();
