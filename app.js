@@ -1251,7 +1251,7 @@ function earnSection(d, E, tab) {
     <div class="chips" style="padding:12px 0 0;margin:0 -16px;padding-left:16px">${ETABS.filter(([k]) => k !== "tone" || hasTone(r)).map(([k, l]) => `<button class="chip ${tab === k ? "on" : ""}" data-et="${k}">${l}</button>`).join("")}</div>
     ${body}
     ${notes.length ? `<details style="margin-top:14px;background:var(--amber-l);border-radius:12px;padding:10px 12px"><summary class="small" style="cursor:pointer;font-weight:600">Notes on the data (${notes.length})</summary><ul class="tiny" style="margin:8px 0 0;padding-left:18px;line-height:1.5">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></details>` : ""}
-    <p class="tiny muted" style="margin:12px 0 0;line-height:1.4">From <b>${esc(E.source || "Call Surgeon")}</b> · ${E.at ? new Date(E.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · The bot's read plus public Street data, not advice. Check the sources before acting.</p></div>`;
+    <p class="tiny muted" style="margin:12px 0 0;line-height:1.4">From <b>${esc(E.source || "Call Surgeon")}</b>${E.at ? " · " + new Date(E.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · The bot's read plus public Street data, not advice. Check the sources before acting.</p></div>`;
 }
 async function loadEarnings(d, st) {
   const el = $("#rearn"); if (!el || isFundD(d)) { if (el) el.innerHTML = ""; return; }
@@ -1261,13 +1261,20 @@ async function loadEarnings(d, st) {
     try { await api(`/research/${d.ticker}/earnings`, { body: {} }); } catch (e) { el.innerHTML = `<div class="card">${err(e)}</div>`; return; } loadEarnings(d, st); };
   if (E.status === "done") { const paint = () => { el.innerHTML = earnSection(d, E, st.etab || "res");
       el.querySelectorAll("[data-et]").forEach((b) => b.onclick = () => { st.etab = b.dataset.et; paint(); }); const nb = $("#er-new"); if (nb) nb.onclick = start; }; paint(); return; }
+  if (E.status === "running" && E.partial) { const secs = Math.round((Date.now() - Date.parse(E.started)) / 1000);
+    const wait = (E.waiting || []).map((w) => w === "lang" ? "Call Surgeon's read of the call" : "the Street numbers (estimates and price targets)").join(" and ");
+    const P = { ...E, status: "done", result: E.partial, at: null };
+    if (!st.etab || (E.waiting || []).includes("lang") && ["call", "tone"].includes(st.etab) || (E.waiting || []).includes("street") && ["res", "drv", "tgt", "down"].includes(st.etab)) st.etab = (E.waiting || []).includes("street") ? "call" : "res";
+    const paint = () => { el.innerHTML = earnSection(d, P, st.etab).replace('<div class="card">', `<div class="card"><div class="small" style="background:var(--amber-l);color:var(--amber);border-radius:10px;padding:8px 10px;margin-bottom:10px"><span class="spin" style="width:12px;height:12px;vertical-align:-2px"></span> Still coming: ${esc(wait)} · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</div>`);
+      el.querySelectorAll("[data-et]").forEach((b) => b.onclick = () => { st.etab = b.dataset.et; paint(); }); };
+    paint(); clearTimeout(st.etimer); st.etimer = setTimeout(() => loadEarnings(d, st), 10000); return; }
   if (E.status === "running") { const secs = Math.round((Date.now() - Date.parse(E.started)) / 1000);
-    el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="empty" style="padding:14px 8px"><span class="spin"></span><div style="margin-top:8px">Call Surgeon is reading the ${E.call_date ? F.date(E.call_date) + " " : ""}call and checking it against the report and the Street.<br><span class="tiny">Usually 2–4 minutes · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} so far</span></div></div></div>`;
-    clearTimeout(st.etimer); st.etimer = setTimeout(() => loadEarnings(d, st), 15000); return; }
+    el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="empty" style="padding:14px 8px"><span class="spin"></span><div style="margin-top:8px">Call Surgeon is reading the ${E.call_date ? F.date(E.call_date) + " " : ""}call and checking it against the report and the Street.<br><span class="tiny">Usually 1–2 minutes · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} so far</span></div></div></div>`;
+    clearTimeout(st.etimer); st.etimer = setTimeout(() => loadEarnings(d, st), 10000); return; }
   if (E.status === "none") { el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="small muted" style="margin-top:6px">No earnings call transcript found for ${esc(d.ticker)} yet.</div></div>`; return; }
   const auto = (d.models || []).length || d.watch;
   el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="small muted" style="margin-top:4px">${E.status === "error" ? esc(E.error || "The last try didn't finish.") : `Latest call: ${E.quarter ? "Q" + esc(E.quarter) + " " : ""}${E.year ? esc(E.year) + " · " : ""}${E.call_date ? F.date(E.call_date) : ""}`}</div>
-    <button class="btn primary" id="er-go" style="margin-top:12px">Break down the call</button><div class="tiny muted" style="margin-top:6px">Results vs Street, what drove it, price targets, key quotes and read-throughs. About 2–4 minutes; saved after that.</div></div>`;
+    <button class="btn primary" id="er-go" style="margin-top:12px">Break down the call</button><div class="tiny muted" style="margin-top:6px">Results vs Street, what drove it, price targets, key quotes and read-throughs. About 1–2 minutes; saved after that.</div></div>`;
   $("#er-go").onclick = start;
   if (auto && E.status === "ready" && !st.autoStarted) { st.autoStarted = true; start(); }
 }
@@ -1423,7 +1430,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {

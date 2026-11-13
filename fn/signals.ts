@@ -138,6 +138,9 @@ export async function transcripts(limit = 3) {
     if (!r.data) continue;
     const reds = (r.data.flags ?? []).filter((x: any) => x.kind === "red").length, greens = (r.data.flags ?? []).filter((x: any) => x.kind === "green").length;
     if (await put("T", t, tr.date, `${r.data.headline ?? "Earnings call read"}`.slice(0, 120), { ...r.data, year: tr.year, quarter: tr.quarter, date: tr.date }, 1 + Math.min(3, reds + greens) / 2, `T:${t}:${tr.date}`)) n++;
+    // have the full earnings breakdown ready before it's opened (skip if Grok Bot or an earlier run already covered this call)
+    try { const have = await kvGet<any>(`call:${t}`, null); const d = String(tr.date).slice(0, 10);
+      if (!(have?.status === "done" && have.call_date >= d) && have?.status !== "running") { const C = await import("./calls.ts"); await C.start(t); } } catch (_) { /* best effort */ }
   }
   await kvSet("transcripts_seen", seen);
   return { checked, added: n };

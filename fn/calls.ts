@@ -3,7 +3,7 @@
 // word-for-word against the transcript, and read-throughs for other companies. The Grok call runs inside the database
 // (pg_net), like Opal, so it can take a few minutes.
 import { sql, kvGet, kvSet, monthCost } from "./db.ts";
-import { ROIC, GROK_DEEP, parseJson } from "./feeds.ts";
+import { ROIC, GROK_DEEP, GROK_FAST, parseJson } from "./feeds.ts";
 import { rulesText } from "./inbox.ts";
 
 const SHAPE = `{
@@ -73,8 +73,7 @@ SEVERITY (constraint flags): 5 = binding/structural; 4 = breaks a prior guide or
 SOURCE WEIGHTS: earnings call 1.00; investor day 0.90; bank conference 0.85; named exec interview 0.80; utility/PUC filing 0.75; 8-K/10-Q 0.70; LEAK_PUB 0.65;
 official X 0.45; C-suite X 0.40; other officers X 0.20; replies/anonymous 0.00 (never). High confidence needs weight >= 0.80, or >= 0.65 plus a confirming source >= 0.70.
 
-STREET LAYER (Odesa adds this, kept separate from your language read): use web search for consensus estimates (name the source and date for each), segment estimates,
-and every analyst price-target change in the week after the report. Never let Street data change a language flag.
+You are given the CURRENT transcript and, when available, the PRIOR quarter's transcript. Use the prior transcript for every vs-prior delta.
 Ranking: constraint flags by severity then weight; opportunities by how hard the number is (CFO guide > CEO claim) then size; segments by revenue.
 Research for a professional, not advice.`;
 
@@ -89,65 +88,135 @@ async function meta(t: string) {
 }
 
 /** Starts a breakdown of the latest call. */
+
+const LANG_SHAPE = `{
+"quarter": "Q3 2026", "confidence": "High|Medium|Low",
+"headline": "one sentence: what happened, with the key numbers said on the call",
+"verdict": "one or two sentences: what changed vs the last call and what actually matters",
+"guidance": [{"item": "", "value": "", "note": "prior value from the last call, or first guide", "direction": "raised|cut|new|held"}],
+"call": [{"kind": "challenge|opportunity", "title": "short headline", "quote": "exact words copied from the transcript, 15-60 words", "speaker": "Name (Role)", "why": "why it matters, with numbers"}],
+"flags": [{"kind": "constraint|opportunity|swag|data-quality", "tag": "CAPEX-GUIDE-BREAK", "severity": 4, "weight": 1.0, "quote": "exact words", "speaker": "Name (Role)", "section": "Prepared|Q&A", "vs_prior": "", "note": ""}],
+"tone_shift": {"prepared": "", "qa": "", "summary": ""},
+"prep": {"score": 3, "exchanges": [{"asked": "analyst (firm): what was asked", "answer": "how it was dodged, short quote"}]},
+"swag": {"score": 3, "baseline_or_shift": "baseline|shift", "quote": "", "note": ""},
+"language_diffs": [""], "unsaid": [""], "seeds": ["PATTERN_TAG"], "pm_summary": ["6-8 bullets, no trade recommendation"], "notes": ["caveats"]
+}`;
+const STREET_SHAPE = `{
+"quarter": "Q3 2026", "report_date": "YYYY-MM-DD",
+"results": [{"metric": "Revenue|Gross profit|Operating income|Net income|EPS diluted|Gross margin|Operating margin|Adj. EBITDA|Free cash flow",
+  "actual": "$14.58B", "est": "$12.72B or null", "est_source": "LSEG (via CNBC)", "est_url": "", "est_date": "YYYY-MM-DD", "est_label": "consensus revenue",
+  "others": [{"value": "", "source": "", "url": ""}], "beat": "beat|miss|inline|none", "surprise": "+$1.86B · +14.6%", "yoy": "+161.4% YoY (from $5.58B)", "prior_q": "$7.81B or null", "derived": false, "note": ""}],
+"drivers": [{"segment": "", "formerly": "", "revenue": "$7.56B", "share_pct": 51.9, "yoy_pct": 830, "est": "$6.47B or null", "est_source": "", "est_url": "", "est_date": "", "others": [], "surprise": "+$1.09B · +16.8% vs estimate", "surprise_pct": 16.8, "detail": ["2-4 short facts"]}],
+"targets": {"window": "YYYY-MM-DD to YYYY-MM-DD", "raised": 0, "cut": 0, "kept": 0, "rows": [{"firm": "", "analyst": "", "rating": "", "from": 0, "to": 0, "date": "YYYY-MM-DD", "url": ""}]},
+"down_the_line": [{"ticker": "", "name": "", "relation": "Supplier|Partner|Competitor|Customer", "read": "Good sign|Mixed|Bad sign", "role": "how they're connected", "what": "what it could mean", "fact": "the fact it rests on", "url": ""}],
+"notes": ["data caveats"]
+}`;
+const STREET_SYS = `You gather the Street view of one company's latest earnings for an experienced wealth manager. Use web search. Answer ONLY with JSON.
+Results: reported actuals from the earnings press release / 8-K vs consensus (name each estimate's source and date; null if none; never invent). Mark figures you computed from the 8-K as derived.
+Drivers: business segments ranked by dollar surprise vs estimate (or by revenue if no estimates), with share of revenue and YoY.
+Targets: every analyst price-target change in the week after the report, top ~20 firms first, with from/to and date; count raised, cut and kept.
+Down the line: 3-6 other US-listed companies affected (suppliers, partners, competitors, customers), each tied to a specific fact from the report or call.
+Short words, numbers over adjectives. Research, not advice.`;
+
+const XAI = (body: any) => sql`select net.http_post(url := 'https://api.x.ai/v1/responses', body := ${sql.json(body as never)}::jsonb,
+  headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'XAI_API_KEY'), 'Content-Type', 'application/json'),
+  timeout_milliseconds := 240000) as id`;
+
+async function priorTranscript(t: string, latest: any) {
+  try {
+    const k = await (await import("./db.ts")).key("ROIC_API_KEY"); if (!k) return null;
+    const { call } = await import("./net.ts");
+    const list = await call("roic", `https://api.roic.ai/v2/company/earnings-calls/list/${encodeURIComponent(t)}?apikey=${encodeURIComponent(k)}`, { timeoutMs: 15000 });
+    const prev = (Array.isArray(list) ? list : []).find((x: any) => !(x.year === latest.year && x.quarter === latest.quarter));
+    if (!prev) return null;
+    const r = await call("roic", `https://api.roic.ai/v2/company/earnings-calls/transcript/${encodeURIComponent(t)}?year=${prev.year}&quarter=${prev.quarter}&apikey=${encodeURIComponent(k)}`, { timeoutMs: 20000 });
+    return r?.content ? { year: prev.year, quarter: prev.quarter, date: String(prev.date ?? "").slice(0, 10), content: String(r.content) } : null;
+  } catch { return null; }
+}
+
+/** Starts a breakdown of the latest call: two Grok calls side by side (language read + Street view). */
 export async function start(t: string) {
   t = t.toUpperCase();
   const cur = await kvGet<any>(`call:${t}`, null);
-  if (cur?.status === "running" && Date.now() - Date.parse(cur.started) < 8 * 60000) return cur;
+  if (cur?.status === "running" && Date.now() - Date.parse(cur.started) < 6 * 60000) return { status: "running", started: cur.started, call_date: cur.call_date };
   const cap = Number((await kvGet<any>("settings", {})).grok_cap_usd ?? 300), spent = await monthCost("grok");
-  if (spent + 1.5 > cap) throw new Error(`Grok monthly cap would be passed ($${spent.toFixed(2)} of $${cap} used). Raise it in Settings.`);
+  if (spent + 1 > cap) throw new Error(`Grok monthly cap would be passed ($${spent.toFixed(2)} of $${cap} used). Raise it in Settings.`);
   let tr: any = null; try { tr = await ROIC.latest(t); } catch (_) { /* none */ }
   if (!tr?.content) { const v = { status: "none", checked: new Date().toISOString() }; await kvSet(`call:${t}`, v); return v; }
   const date = String(tr.date ?? "").slice(0, 10);
-  const user = `Company: ${t}. Earnings call for fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, held ${date}. Today is ${new Date().toISOString().slice(0, 10)}.\n` +
-    `Return JSON matching:\n${SHAPE}\n\nTRANSCRIPT:\n${String(tr.content).slice(0, 110000)}`;
-  const body = { model: GROK_DEEP, input: [{ role: "system", content: SYS + (await rulesText(true)) }, { role: "user", content: user }], tools: [{ type: "web_search" }], max_turns: 6 };
-  const [req] = await sql`select net.http_post(url := 'https://api.x.ai/v1/responses', body := ${sql.json(body as never)}::jsonb,
-      headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'XAI_API_KEY'), 'Content-Type', 'application/json'),
-      timeout_milliseconds := 300000) as id`;
-  const v = { status: "running", started: new Date().toISOString(), req_id: req.id, call_date: date, year: tr.year, quarter: tr.quarter, transcript: String(tr.content).slice(0, 200000) };
+  const prior = await priorTranscript(t, tr);
+  const langUser = `Company: ${t}. Earnings call for fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, held ${date}.\nReturn JSON matching:\n${LANG_SHAPE}\n\n` +
+    `CURRENT TRANSCRIPT:\n${String(tr.content).slice(0, 100000)}\n\n` + (prior ? `PRIOR QUARTER TRANSCRIPT (fiscal ${prior.year} Q${prior.quarter}, ${prior.date}):\n${prior.content.slice(0, 60000)}` : "PRIOR QUARTER TRANSCRIPT: not available. Mark deltas as not re-verified.");
+  const streetUser = `Company: ${t}. Latest earnings: fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, call held ${date}. Today is ${new Date().toISOString().slice(0, 10)}.\nReturn JSON matching:\n${STREET_SHAPE}`;
+  const [a] = await XAI({ model: GROK_DEEP, input: [{ role: "system", content: SYS + (await rulesText(true)) }, { role: "user", content: langUser }] });
+  const [b] = await XAI({ model: GROK_FAST, input: [{ role: "system", content: STREET_SYS }, { role: "user", content: streetUser }], tools: [{ type: "web_search" }], max_turns: 5 });
+  const v = { status: "running", started: new Date().toISOString(), reqs: { lang: a.id, street: b.id }, parts: {}, cost: 0, call_date: date, year: tr.year, quarter: tr.quarter,
+    transcript: String(tr.content).slice(0, 200000), prior_date: prior?.date ?? null };
   await kvSet(`call:${t}`, v);
   return { status: "running", started: v.started, call_date: date };
 }
 
-/** The breakdown for a ticker: finished result, progress, or what's available to start. */
+function readResponse(resp: any) {
+  let j: any = null; try { j = JSON.parse(resp.content); } catch { /* cut off */ }
+  const cost = Number(j?.usage?.cost_in_usd_ticks ?? 0) / 1e10;
+  let text = ""; const cites: any[] = [];
+  for (const it of j?.output ?? []) if (it.type === "message") for (const p of it.content ?? []) { text += p.text ?? ""; for (const a of p.annotations ?? []) if (a.url) cites.push({ url: a.url, title: a.title }); }
+  const r = resp.status_code === 200 ? parseJson(text) : null;
+  return { r: r && typeof r === "object" && !Array.isArray(r) ? r : null, cost, cites, err: resp.timed_out ? "timed out" : resp.status_code !== 200 ? `Grok error ${resp.status_code ?? ""}` : null };
+}
+function merge(cur: any) {
+  const L = cur.parts.lang?.r ?? {}, S = cur.parts.street?.r ?? {};
+  const T = norm(cur.transcript ?? "");
+  for (const c of L.call ?? []) { const q = norm(c.quote); c.verified = q.length > 12 && T.includes(q); if (!c.verified) c.quote_unverified = c.quote, c.quote = null; }
+  for (const f of L.flags ?? []) { const q = norm(f.quote); f.verified = q.length > 8 && T.includes(q); if (!f.verified) f.quote_unverified = f.quote, f.quote = null; }
+  const notes = [...(S.notes ?? []), ...(L.notes ?? [])];
+  for (const [k, p] of Object.entries(cur.parts as Record<string, any>)) if (p?.err) notes.push(k === "lang" ? `Call Surgeon's language read didn't finish (${p.err}).` : `The Street view didn't finish (${p.err}).`);
+  if (!cur.prior_date) notes.push("Last quarter's transcript wasn't available, so changes vs the prior call weren't re-verified.");
+  return { ...S, ...L, quarter: L.quarter ?? S.quarter, results: S.results ?? [], drivers: S.drivers ?? [], targets: S.targets ?? null, down_the_line: S.down_the_line ?? [], guidance: L.guidance ?? [], notes,
+    citations: [...(cur.parts.street?.cites ?? []), ...(cur.parts.lang?.cites ?? [])].filter((c: any, i: number, a: any[]) => a.findIndex((x) => x.url === c.url) === i).slice(0, 25) };
+}
+
+/** The breakdown for a ticker: finished result, a partial one while the other half finishes, or what's available to start. */
 export async function get(t: string, models: { id: number; name: string; holdings: any[] }[] = []) {
   t = t.toUpperCase();
   let cur = await kvGet<any>(`call:${t}`, null);
-  if (cur?.status === "running") {
-    const [resp] = await sql`select status_code, content, error_msg, timed_out from net._http_response where id = ${cur.req_id}`;
-    if (!resp) {
-      if (Date.now() - Date.parse(cur.started) > 7 * 60000) { cur = { status: "error", error: "The breakdown took too long. Try again." }; await kvSet(`call:${t}`, cur); }
-      else return { status: "running", started: cur.started, call_date: cur.call_date };
-    } else {
-      // claim it so two polls never process (or bill) it twice
-      const claimed = await sql`update odesa.kv set v = jsonb_set(v, '{status}', '"parsing"') where k = ${"call:" + t} and v->>'status' = 'running' returning k`;
-      if (!claimed.length) return { status: "running", started: cur.started, call_date: cur.call_date };
-      let j: any = null; try { j = JSON.parse(resp.content); } catch { /* cut off */ }
-      const cost = Number(j?.usage?.cost_in_usd_ticks ?? 0) / 1e10;
-      await sql`insert into odesa.feed_usage(day, source, calls, cost, last_ok) values (current_date, 'grok', 1, ${cost}, now())
-        on conflict (day, source) do update set calls = odesa.feed_usage.calls + 1, cost = odesa.feed_usage.cost + ${cost}, last_ok = now()`;
-      let text = ""; const cites: any[] = [];
-      for (const it of j?.output ?? []) if (it.type === "message") for (const p of it.content ?? []) { text += p.text ?? ""; for (const a of p.annotations ?? []) if (a.url) cites.push({ url: a.url, title: a.title }); }
-      const r = resp.status_code === 200 ? parseJson(text) : null;
-      if (!r || typeof r !== "object" || Array.isArray(r)) {
-        cur = { status: "error", error: resp.status_code === 200 ? "The breakdown came back unreadable. Try again." : `Grok error ${resp.status_code ?? ""}`.trim() };
-      } else {
-        // quotes must appear word-for-word in the transcript
-        const T = norm(cur.transcript ?? "");
-        for (const c of r.call ?? []) { const q = norm(c.quote); c.verified = q.length > 12 && T.includes(q); if (!c.verified) c.quote_unverified = c.quote, c.quote = null; }
-        for (const f of r.flags ?? []) { const q = norm(f.quote); f.verified = q.length > 8 && T.includes(q); if (!f.verified) f.quote_unverified = f.quote, f.quote = null; }
-        r.citations = cites.filter((c, i) => cites.findIndex((x) => x.url === c.url) === i).slice(0, 25);
-        cur = { status: "done", at: new Date().toISOString(), call_date: cur.call_date, year: cur.year, quarter: cur.quarter, cost, result: r };
-      }
+  if (cur?.status === "running" && cur.reqs) {
+    for (const part of ["lang", "street"]) {
+      if (cur.parts?.[part]) continue;
+      const [resp] = await sql`select status_code, content, error_msg, timed_out from net._http_response where id = ${cur.reqs[part]}`;
+      if (!resp) continue;
+      // claim this half so two polls never process (or bill) it twice
+      const claimed = await sql`update odesa.kv set v = jsonb_set(v, ${sql.array(["parts", part])}, '{"claimed":true}'::jsonb) where k = ${"call:" + t} and not (v->'parts' ? ${part}) returning k`;
+      if (!claimed.length) continue;
+      const rr = readResponse(resp);
+      if (rr.cost) await sql`insert into odesa.feed_usage(day, source, calls, cost, last_ok) values (current_date, 'grok', 1, ${rr.cost}, now())
+        on conflict (day, source) do update set calls = odesa.feed_usage.calls + 1, cost = odesa.feed_usage.cost + ${rr.cost}, last_ok = now()`;
+      cur.parts[part] = { r: rr.r, cites: rr.cites.slice(0, 20), err: rr.r ? null : (rr.err ?? "unreadable reply") }; cur.cost = (cur.cost ?? 0) + rr.cost;
+      await sql`update odesa.kv set v = jsonb_set(jsonb_set(v, ${sql.array(["parts", part])}, ${sql.json(cur.parts[part])}), '{cost}', ${sql.json(cur.cost)}) where k = ${"call:" + t}`;
+    }
+    cur = await kvGet<any>(`call:${t}`, cur);
+    const done = ["lang", "street"].filter((p) => cur.parts?.[p] && !cur.parts[p].claimed);
+    const expired = Date.now() - Date.parse(cur.started) > 6 * 60000;
+    if (done.length === 2 || expired) {
+      for (const p of ["lang", "street"]) if (!cur.parts?.[p] || cur.parts[p].claimed) cur.parts[p] = { r: null, err: "took too long" };
+      const any = cur.parts.lang.r || cur.parts.street.r;
+      cur = any ? { status: "done", at: new Date().toISOString(), call_date: cur.call_date, year: cur.year, quarter: cur.quarter, cost: cur.cost, result: merge(cur) }
+        : { status: "error", error: "The breakdown didn't finish. Try again." };
       await kvSet(`call:${t}`, cur);
+    } else {
+      const partial = done.length ? merge({ ...cur, parts: { lang: done.includes("lang") ? cur.parts.lang : null, street: done.includes("street") ? cur.parts.street : null } }) : null;
+      if (partial) partial.notes = partial.notes.filter((n: string) => !/didn't finish/.test(n));
+      return { status: "running", started: cur.started, call_date: cur.call_date, partial, waiting: ["lang", "street"].filter((p) => !done.includes(p)) };
     }
   }
+  if (cur?.status === "running" && !cur.reqs) { // an older single-call run
+    if (Date.now() - Date.parse(cur.started) > 8 * 60000) { cur = { status: "error", error: "The breakdown took too long. Try again." }; await kvSet(`call:${t}`, cur); }
+    else return { status: "running", started: cur.started, call_date: cur.call_date };
+  }
   if (cur?.status === "done") {
-    // tag read-through names that are in the manager's models
     const r = cur.result;
     for (const x of r.down_the_line ?? []) { const tk = String(x.ticker ?? "").toUpperCase();
       x.models = models.map((m) => { const h = (m.holdings ?? []).find((h: any) => String(h.t).toUpperCase() === tk); return h ? { name: m.name, w: h.w } : null; }).filter(Boolean); }
-    // a newer call is out?
     const m = await meta(t); const newer = m.date && cur.call_date && m.date > cur.call_date ? m.date : null;
     return { status: "done", at: cur.at, call_date: cur.call_date, result: r, newer, source: cur.source ?? "Call Surgeon" };
   }
