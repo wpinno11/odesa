@@ -1,7 +1,7 @@
 // Opal: one sentence of news -> checked, patterned, three levels deep, three directions, then-what, thrive/danger and a seven-rung trade ladder.
 // The Grok call runs inside the database (pg_net) so it can take a few minutes without hitting the function's time limit.
 import { sql, kvGet, monthCost } from "./db.ts";
-import { MD, GROK_DEEP, parseJson } from "./feeds.ts";
+import { MD, GROK_DEEP, GROK_FAST, parseJson } from "./feeds.ts";
 import { deferredSubmit, deferredPoll } from "./calls.ts";
 import { overlap } from "./signals.ts";
 
@@ -169,7 +169,7 @@ async function explainStep(run: any) {
     if (!claim.length) return run;
     try {
       const slim = { ...r }; delete slim.tickers; delete slim.citations; delete slim.sources; delete slim.moves; delete slim.explain;
-      const req = await deferredSubmit({ model: GROK_DEEP, messages: [{ role: "system", content: EXPLAIN_SYS }, { role: "user", content: `News: "${run.question}"\nThe run:\n${JSON.stringify(slim)}` }] });
+      const req = await deferredSubmit({ model: GROK_FAST, messages: [{ role: "system", content: EXPLAIN_SYS }, { role: "user", content: `News: "${run.question}"\nThe run:\n${JSON.stringify(slim)}` }] });
       const mv = r.moves ?? await moves(r);
       const ex = { status: "running", req, started: new Date().toISOString() };
       const [u] = await sql`update odesa.opal_runs set result = result || ${sql.json({ explain: ex, moves: mv } as never)} where id = ${id} returning *`; return u;
