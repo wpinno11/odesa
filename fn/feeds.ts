@@ -45,6 +45,12 @@ export const MD = {
     if (r.s === "no_data") return null;
     return rows(r, ["optionSymbol", "bid", "ask", "mid", "last", "iv", "delta", "underlyingPrice", "updated"])[0] ?? null;
   },
+  /** Candles from a start date (YYYY-MM-DD). Daily candles are split-adjusted. */
+  async candlesFrom(symbol: string, from: string, res = "D") {
+    const r = await md(`/stocks/candles/${res}/${symbol.toUpperCase()}/`, { from, to: new Date().toISOString().slice(0, 10) });
+    if (r.s === "no_data") return [];
+    return rows(r, ["t", "c"]);
+  },
   async candles(symbol: string, countback = 260, res = "D") {
     const r = await md(`/stocks/candles/${res}/${symbol.toUpperCase()}/`, { countback });
     if (r.s === "no_data") return [];
@@ -93,6 +99,15 @@ export const UW = {
   darkpool: (t: string) => uw(`/api/darkpool/${t.toUpperCase()}`, { limit: 50 }),
   headlines: (p: Record<string, any> = {}) => uw("/api/news/headlines", p),
   tide: () => uw("/api/market/market-tide"),
+  /** Screener row(s): sector, size, beta, dividend yield, short interest, earnings growth, volatility, 52-week range. */
+  screener: async (tickers: string[]) => {
+    const out: Record<string, any> = {};
+    for (let i = 0; i < tickers.length; i += 25) {
+      const r = await uw("/api/screener/stocks", { ticker: tickers.slice(i, i + 25).join(",") }, 30000);
+      for (const x of (Array.isArray(r) ? r : [])) if (x?.ticker) out[String(x.ticker).toUpperCase()] = x;
+    }
+    return out;
+  },
   raw: uw,
 };
 
@@ -116,6 +131,12 @@ export const QV = {
 
 // ---------------------------------------------------------------- ROIC.AI transcripts
 export const ROIC = {
+  /** Last four quarters of per-share data (EPS, revenue per share), newest first. */
+  async perShare(t: string) {
+    const k = await need("ROIC_API_KEY", "roic");
+    const r = await call("roic", `https://api.roic.ai/v2/fundamental/per-share/${encodeURIComponent(t.toUpperCase())}?period=quarterly&limit=4&apikey=${encodeURIComponent(k)}`, { timeoutMs: 20000 });
+    return Array.isArray(r) ? r : [];
+  },
   async latest(t: string) {
     const k = await need("ROIC_API_KEY", "roic");
     const r = await call("roic", `https://api.roic.ai/v2/company/earnings-calls/latest/${t.toUpperCase()}?apikey=${encodeURIComponent(k)}`, { timeoutMs: 30000 });

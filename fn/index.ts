@@ -8,6 +8,7 @@ import * as S from "./signals.ts";
 import * as OPAL from "./opal.ts";
 import * as R from "./research.ts";
 import * as G from "./grow.ts";
+import * as P from "./perf.ts";
 import { vapid, subscribe, unsubscribe, notify } from "./push.ts";
 
 const ORIGINS = [/^https:\/\/wpinno11\.github\.io$/, /^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
@@ -112,6 +113,7 @@ async function route(c: Ctx): Promise<unknown> {
   if (a === "models" && !b && m === "POST") {
     const h = cleanHoldings(c.body.holdings ?? []);
     const [r] = await sql`insert into odesa.models(name, benchmark, holdings, sort) values (${String(c.body.name ?? "New model").slice(0, 60)}, ${c.body.benchmark ?? "SPY"}, ${sql.json(h)}, 99) returning *`;
+    await sql`insert into odesa.model_weights(model_id, holdings) values (${r.id}, ${sql.json(h)})`;
     return r;
   }
   if (a === "models" && b && m === "POST" && !d) {
@@ -119,11 +121,13 @@ async function route(c: Ctx): Promise<unknown> {
     const h = c.body.holdings !== undefined ? cleanHoldings(c.body.holdings) : cur.holdings;
     await sql`insert into odesa.model_versions(model_id, name, holdings) values (${id}, ${cur.name}, ${sql.json(cur.holdings)})`;
     const [r] = await sql`update odesa.models set name = ${String(c.body.name ?? cur.name).slice(0, 60)}, benchmark = ${c.body.benchmark ?? cur.benchmark}, holdings = ${sql.json(h)}, updated_at = now() where id = ${id} returning *`;
+    if (JSON.stringify(h) !== JSON.stringify(cur.holdings)) await sql`insert into odesa.model_weights(model_id, holdings) values (${id}, ${sql.json(h)})`;
     return r;
   }
   if (a === "models" && b && d === "undo" && m === "POST") {
     const id = num(b, "id"); const [v] = await sql`select * from odesa.model_versions where model_id = ${id} order by saved_at desc limit 1`;
     if (!v) bad("Nothing to undo."); await sql`update odesa.models set holdings = ${sql.json(v.holdings)}, updated_at = now() where id = ${id}`;
+    await sql`insert into odesa.model_weights(model_id, holdings) values (${id}, ${sql.json(v.holdings)})`;
     await sql`delete from odesa.model_versions where id = ${v.id}`; return { ok: true };
   }
   if (a === "models" && b && m === "DELETE") { await sql`delete from odesa.models where id = ${num(b, "id")}`; return { ok: true }; }
@@ -254,9 +258,17 @@ async function route(c: Ctx): Promise<unknown> {
 
   // ---------------- alerts, settings, push
   if (a === "events") { if (m === "POST") await sql`update odesa.events set read = true where not read`; return await sql`select * from odesa.events order by ts desc limit 60`; }
+  // ---------------- track record, comparisons, stats
+  if (a === "perf" && b) {
+    const id = num(b, "id");
+    if (!d) return await P.track(id);
+    if (d === "intraday") return await P.intraday(id);
+    if (d === "compare") return await P.compare(id, String(c.q.get("vs") ?? ""), String(c.q.get("window") ?? "since"));
+    if (d === "stats") return await P.stats(id, String(c.q.get("vs") ?? ""));
+  }
   if (a === "settings") {
     const s = await kvGet<any>("settings", {});
-    if (m === "POST") { const allow = ["target_pct", "stop_pct", "sell_target_pct", "sell_stop_pct", "contracts", "auto_close", "grok_cap_usd", "firm", "pulse", "push"];
+    if (m === "POST") { const allow = ["target_pct", "stop_pct", "sell_target_pct", "sell_stop_pct", "contracts", "auto_close", "grok_cap_usd", "firm", "pulse", "push", "cash_yield_pct"];
       for (const k of allow) if (c.body[k] !== undefined) s[k] = c.body[k]; await kvSet("settings", s); }
     return s;
   }
@@ -282,6 +294,7 @@ async function runJob(job: string) {
     case "putsales": return await S.putSales();
     case "mark": return await O.markAll();
     case "settle": return await O.settleExpired();
+    case "perf": return await P.lockAll();
     default: bad("Unknown job.");
   }
 }
@@ -313,6 +326,7 @@ async function tickInner() {
     }
   }
   if (n.mins >= 975 && !dd.done.includes("settle")) { dd.done.push("settle"); await kvSet("daily_done", dd); await step("settle", O.settleExpired); }
+  if (n.mins >= 1025 && tradingDay() && !dd.done.includes("perf")) { dd.done.push("perf"); await kvSet("daily_done", dd); await step("perf", P.lockAll); }
   await kvSet("last_tick", { at: new Date().toISOString(), ms: Date.now() - t0, out });
   return out;
 }
