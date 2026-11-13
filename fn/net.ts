@@ -1,5 +1,5 @@
 // One door for every outside call: timeout, one retry on 429/5xx, usage tracking, friendly errors.
-import { usage } from "./db.ts";
+import { usage, sql } from "./db.ts";
 
 export class SourceError extends Error {
   constructor(public source: string, msg: string, public status?: number) { super(`${source}: ${msg}`); }
@@ -40,6 +40,25 @@ export async function call(source: string, url: string, init: RequestInit & { ti
     const text = await res.text();
     await usage(source, true, cost);
     try { return text ? JSON.parse(text) : null; } catch { throw new SourceError(source, "response was not JSON"); }
+  }
+}
+
+/** MarketData call made from the database (one fixed internet address; MarketData allows only one per account). */
+export async function callMd(path: string, timeoutMs = 20000): Promise<any> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let st = 0, text = "";
+    try { const [r] = await sql`select status, body from odesa.md_get(${path}, ${timeoutMs})`; st = Number(r.status); text = String(r.body ?? ""); }
+    catch (e) { await usage("marketdata", false, 0, "network"); if (attempt === 0) { await new Promise((ok) => setTimeout(ok, 1000)); continue; }
+      throw new SourceError("marketdata", "network error"); }
+    if ([429, 500, 502, 503, 504].includes(st) && attempt === 0) { await usage("marketdata", false, 0, `HTTP ${st}`); await new Promise((ok) => setTimeout(ok, 2000)); continue; }
+    let j: any = null; try { j = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+    if (st === 404 && j && j.s === "no_data") { await usage("marketdata", true); return j; }
+    if (st === 403 && /one device|IP address has changed/i.test(text)) { await usage("marketdata", false, 0, "paused: address changed");
+      throw new SourceError("marketdata", "paused for 5 minutes by MarketData (requests came from a new internet address)", 403); }
+    if (st >= 400) { await usage("marketdata", false, 0, `HTTP ${st}`); throw new SourceError("marketdata", `HTTP ${st} (${HINT[st] ?? "error"})`, st); }
+    await usage("marketdata", true);
+    if (j === null) throw new SourceError("marketdata", "response was not JSON");
+    return j;
   }
 }
 

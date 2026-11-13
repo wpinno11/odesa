@@ -1,6 +1,6 @@
 // Data feeds. Each provider is a small object; all calls go through net.call so usage and errors are tracked.
 import { key, monthCost, usage, kvGet } from "./db.ts";
-import { call, SourceError, num } from "./net.ts";
+import { call, callMd, SourceError, num } from "./net.ts";
 
 async function need(name: string, source: string) {
   const k = await key(name);
@@ -15,9 +15,8 @@ function rows(r: Cols, cols: string[]) {
   return Array.from({ length: n }, (_, i) => Object.fromEntries(cols.map((c) => [c, (r[c] ?? [])[i] ?? null])));
 }
 async function md(path: string, params: Record<string, string | number | undefined> = {}) {
-  const k = await need("MARKETDATA_API_KEY", "marketdata");
   const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== "").map(([a, b]) => [a, String(b)]));
-  const r = await call("marketdata", `https://api.marketdata.app/v1${path}${q.size ? "?" + q : ""}`, { headers: { Authorization: `Bearer ${k}` } });
+  const r = await callMd(`/v1${path}${q.size ? "?" + q : ""}`);
   if (!r || (r.s !== "ok" && r.s !== "no_data")) throw new SourceError("marketdata", r?.errmsg ?? "bad response");
   return r;
 }
