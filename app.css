@@ -69,7 +69,7 @@ textarea.box{width:100%;border:1px solid #E3E4E7;border-radius:16px;padding:14px
 /* tab bar */
 .tabs{position:fixed;left:0;right:0;bottom:0;height:calc(84px + var(--safe-b));padding-bottom:var(--safe-b);background:rgba(255,255,255,.94);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
  border-top:1px solid rgba(14,26,38,.08);display:flex;justify-content:space-around;align-items:flex-start;padding-top:8px;z-index:30}
-.tabs a{display:flex;flex-direction:column;align-items:center;gap:3px;width:64px;text-decoration:none;color:var(--gray2);font-size:10px;font-weight:600}
+.tabs a{display:flex;flex-direction:column;align-items:center;gap:3px;width:56px;text-decoration:none;color:var(--gray2);font-size:10px;font-weight:600}
 .tabs a.on{color:var(--navy)}
 .tabs a.opal{margin-top:-20px;color:var(--navy);font-weight:700}
 .tabs a.opal span{width:52px;height:52px;border-radius:26px;background:var(--navy);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(15,33,51,.3);border:3px solid var(--brass)}

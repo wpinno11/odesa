@@ -51,16 +51,17 @@ const ICON = {
   options: '<svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/></svg>',
   grow: '<svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V11"/><path d="M12 11c0-4 3-7 8-7 0 5-3 7-8 7z"/><path d="M12 14c0-3-2.5-5-7-5 0 4 2.5 5 7 5z"/></svg>',
   opal: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="7" ry="9"/><path d="M9 7.5c1.6-1.2 3.9-1.1 5.3.4M8.6 14.5l2.4-2.4 2 2 2.4-2.6"/></svg>',
+  research: '<svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M7.5 12l2-2.2 1.6 1.4 2.4-2.8"/></svg>',
   search: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
   gear: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
 function tabbar(active) {
   const t = (id, label, href) => `<a href="${href}" class="${active === id ? "on" : ""}" aria-label="${label}">${ICON[id]}${label}</a>`;
-  return `<nav class="tabs" aria-label="Sections">${t("today", "Today", "#today")}${t("portfolio", "Portfolio", "#portfolio")}
+  return `<nav class="tabs" aria-label="Sections">${t("today", "Today", "#today")}${t("research", "Research", "#research")}${t("portfolio", "Portfolio", "#portfolio")}
     <a href="#opal" class="opal" aria-label="Opal"><span>${ICON.opal}</span>Opal</a>${t("options", "Options", "#options")}${t("grow", "Grow", "#grow")}</nav>`;
 }
 let CUR_TAB = "today";
-function page(html, tab = CUR_TAB) { CUR_TAB = tab; app().innerHTML = `<div class="wrap">${html}</div>${tabbar(tab)}`; window.scrollTo(0, 0); }
+function page(html, tab = CUR_TAB) { CUR_TAB = tab; document.querySelectorAll(".sheet-bg").forEach((x) => x.remove()); app().innerHTML = `<div class="wrap">${html}</div>${tabbar(tab)}`; window.scrollTo(0, 0); }
 function fill(sel, html) { const el = $(sel); if (el) el.innerHTML = html; }
 function err(e) { return `<div class="empty">${esc(e.message || e)}</div>`; }
 function sheet(html) {
@@ -456,6 +457,9 @@ async function vManager(id) {
   page(`${hdr("Models", { back: "#portfolio", sub: "Edit holdings and targets. Each save keeps the last version so you can undo." })}<div id="m-body">${spinner()}</div>`, "portfolio");
   const ms = await getModels(true); let m = ms.find((x) => String(x.id) === String(id)) || ms[0];
   let H = JSON.parse(JSON.stringify(m ? m.holdings : []));
+  try { const p = JSON.parse(sessionStorage.getItem("odesa_add") || "null"); sessionStorage.removeItem("odesa_add");
+    if (p && m && String(p.id) === String(m.id)) { const w = Math.round(Number(p.w) * 100); const e = H.find((x) => x.t === p.t);
+      if (e) e.w = w; else H.push({ t: p.t, n: String(p.n || "").slice(0, 80), w }); setTimeout(() => toast(`${p.t} added at ${p.w}%. Trim the others to 100%, then Save model.`, 4500), 300); } } catch (_) {}
   const draw = () => {
     const tot = H.reduce((s, x) => s + (Number(x.w) || 0), 0);
     fill("#m-body", `<div class="chips">${ms.map((x) => `<a class="chip ${m && x.id === m.id ? "on" : ""}" href="#manager/${x.id}">${esc(x.name)}</a>`).join("")}<button class="chip" id="newm">+ New model</button></div>
@@ -907,6 +911,381 @@ async function vStock(t) {
     if (d.summary) sum(d.summary); else api(`/stock/${t}/summary`).then(sum).catch((e) => fill("#st-sum-b", err(e)));
   } catch (e) { fill("#st-body", err(e)); }
 }
+// ---------------------------------------------------------------- Research: one uniform page for any stock or fund
+const RECENT_KEY = "odesa_recent";
+const recentGet = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (_) { return []; } };
+const recentAdd = (t) => { try { const r = [t, ...recentGet().filter((x) => x !== t)].slice(0, 12); localStorage.setItem(RECENT_KEY, JSON.stringify(r)); } catch (_) {} };
+const MEMR = {};
+async function getProfile(t, force) { const c = MEMR[t]; if (c && !force && Date.now() - c.at < 120000) return c.v; const v = await api("/research/" + encodeURIComponent(t)); MEMR[t] = { at: Date.now(), v }; return v; }
+const pctS = (n, d = 1) => n === null || n === undefined || isNaN(n) ? "–" : F.pct(n * 100, d);
+const pctU = (n, d = 1) => n === null || n === undefined || isNaN(n) ? "–" : F.pct(n * 100, d, false);
+const xx = (n) => n === null || n === undefined || isNaN(n) ? "–" : n < 0 ? "n/m" : n >= 1000 ? Math.round(n).toLocaleString() + "×" : n.toFixed(1) + "×";
+const isFundD = (d) => d.kind === "fund" || !!(d.street && /fund|etf/i.test(d.street.kind || ""));
+const pctN = (v, d = 2) => v === null || v === undefined || isNaN(v) ? "–" : Number(v).toFixed(d) + "%";   // already in percent
+const stars = (n) => n ? `<span style="color:var(--brass);letter-spacing:2px">${"★".repeat(Math.round(n))}<span style="color:#DDD">${"★".repeat(5 - Math.round(n))}</span></span>` : "–";
+function fundRet(d) { const f = (d.street && d.street.fund) || {}; const r = d.returns || { t: {}, spy: {} }; const hasPx = ["1Y", "3Y", "5Y", "10Y"].some((k) => r.t[k] !== null && r.t[k] !== undefined);
+  const fr = f.returns || {}; return { t: hasPx ? r.t : Object.fromEntries(["1Y", "3Y", "5Y", "10Y"].map((k) => [k, fr[k] !== null && fr[k] !== undefined ? fr[k] / 100 : null])), spy: r.spy || {},
+    cat: Object.fromEntries(["1Y", "3Y", "5Y", "10Y"].map((k) => [k, f.category_returns && f.category_returns[k] !== null && f.category_returns[k] !== undefined ? f.category_returns[k] / 100 : null])), total: !hasPx }; }
+function fundTop(d) {
+  const f = (d.street && d.street.fund) || {}; const has = (v) => v !== null && v !== undefined && v !== "" && !(typeof v === "number" && isNaN(v));
+  const er = has(f.expense_ratio) ? Number(f.expense_ratio) : null, fl = has(f.front_load) ? Number(f.front_load) : null, b1 = has(f.b12_1) ? Number(f.b12_1) : null;
+  const yrs = (y) => y ? Math.max(0, new Date().getFullYear() - Number(y)) : null;
+  const rating = `<div class="card navy" style="display:grid;grid-template-columns:1fr 1fr;gap:14px 10px">
+      <div><div class="tiny" style="color:rgba(255,255,255,.65);font-weight:700;letter-spacing:.06em">MORNINGSTAR</div><div style="font-size:22px;margin-top:4px">${f.stars ? `<span style="color:var(--brass-l);letter-spacing:2px">${"★".repeat(Math.round(f.stars))}</span><span style="color:rgba(255,255,255,.25);letter-spacing:2px">${"★".repeat(5 - Math.round(f.stars))}</span>` : "–"}</div></div>
+      <div><div class="tiny" style="color:rgba(255,255,255,.65);font-weight:700;letter-spacing:.06em">MEDALIST</div><div style="font-size:19px;font-weight:700;margin-top:4px;color:${/gold/i.test(f.medal || "") ? "#E8C873" : /silver/i.test(f.medal || "") ? "#D8DDE3" : /bronze/i.test(f.medal || "") ? "#D9A57A" : "#fff"}">${esc(f.medal || "–")}</div></div>
+      <div><div class="tiny" style="color:rgba(255,255,255,.65);font-weight:700;letter-spacing:.06em">CATEGORY RANK</div><div style="font-size:17px;font-weight:700;margin-top:4px">${esc(f.category_rank || "–")}</div></div>
+      <div><div class="tiny" style="color:rgba(255,255,255,.65);font-weight:700;letter-spacing:.06em">RISK</div><div style="font-size:17px;font-weight:700;margin-top:4px">${esc(f.risk || "–")}</div></div></div>`;
+  const cost10k = er !== null ? er / 100 * 10000 : null, load10k = fl ? fl / 100 * 10000 : null;
+  const fees = `<div class="card" style="background:var(--amber-l)"><div class="eyebrow" style="color:var(--amber)">Fees & costs</div>
+      <div class="row" style="align-items:baseline;gap:8px;margin-top:6px"><span class="big n">${er !== null ? er.toFixed(2) + "%" : "–"}</span><span class="small muted">expense ratio</span></div>
+      ${cost10k !== null ? `<div class="small" style="margin-top:4px">≈ <b>$${Math.round(cost10k)}/yr</b> on $10,000${load10k ? ` · plus <b>$${Math.round(load10k)}</b> up-front sales charge` : ""}</div>` : ""}
+      <div class="grid3" style="margin-top:14px;gap:12px 8px">${[["Front-end load", fl ? fl.toFixed(2) + "%" : fl === 0 ? "None" : "–", fl ? "down" : ""], ["Back-end load", has(f.back_load) ? (Number(f.back_load) ? Number(f.back_load).toFixed(2) + "%" : "None") : "–", ""],
+        ["12b-1 fee", b1 ? b1.toFixed(2) + "%" : b1 === 0 ? "None" : "–", b1 ? "down" : ""], ["Minimum", has(f.min_investment) ? (Number(f.min_investment) ? "$" + Number(f.min_investment).toLocaleString() : "None") : "–", ""],
+        ["Yield", has(f.yield) ? pctN(f.yield) : "–", ""], ["Turnover", has(f.turnover) ? pctN(f.turnover, 0) : "–", ""]]
+        .map(([a, b, c]) => `<div><div class="tiny muted" style="font-weight:600">${a}</div><div class="n ${c}" style="font-size:17px;font-weight:700;margin-top:2px">${b}</div></div>`).join("")}</div>
+      ${fl || b1 ? `<p class="small" style="margin:12px 0 0;color:var(--amber)">⚠︎ ${fl ? "Front-end load" : ""}${fl && b1 ? " and " : ""}${b1 ? "12b-1 fee" : ""}: compare share classes before recommending.</p>` : ""}</div>`;
+  const mgr = (f.managers || []).length || f.style_note ? `<div class="card"><div class="eyebrow">Who manages it</div>
+      ${(f.managers || []).map((m) => `<div style="padding:12px 0;border-bottom:1px solid var(--line)"><div class="row between"><b style="font-size:16px">${esc(m.name || "")}</b>${m.since ? `<span class="pill" style="background:var(--soft)">${yrs(m.since)} yrs · since ${esc(m.since)}</span>` : ""}</div>
+        ${m.style ? `<div class="small" style="margin-top:4px;color:var(--brass-t);font-weight:600">${esc(m.style)}</div>` : ""}
+        ${(m.other_funds || []).filter(Boolean).length ? `<div class="tiny muted" style="margin-top:4px;line-height:1.4">Also manages: ${m.other_funds.filter(Boolean).slice(0, 5).map(esc).join(" · ")}</div>` : ""}</div>`).join("")}
+      ${f.style_note ? `<p style="margin:12px 0 0;font-size:15px;line-height:1.45">${esc(f.style_note)}</p>` : ""}</div>` : "";
+  return { rating: f.stars || f.medal || f.category_rank ? rating : "", fees, mgr };
+}
+const sizeName = (mc) => !mc ? "" : mc >= 200e9 ? "Mega cap" : mc >= 10e9 ? "Large cap" : mc >= 2e9 ? "Mid cap" : mc >= 300e6 ? "Small cap" : "Micro cap";
+
+async function vResearch() {
+  page(`${hdr("Research", { light: true, top: `<div style="height:calc(10px + var(--safe-t))"></div>` })}
+    <div style="margin:4px 16px 0"><div class="field grey">${ICON.search}<input id="rq" placeholder="Ticker or company name" autocapitalize="characters" autocomplete="off" autofocus></div></div>
+    <div id="rr"></div><div id="rhome"></div>`, "research");
+  const home = async () => {
+    const rec = recentGet(); let ms = []; try { ms = await getModels(); } catch (_) {}
+    const held = [...new Set(ms.flatMap((m) => (m.holdings || []).filter((h) => !h.cash).map((h) => h.t)))];
+    const chips = (arr) => `<div class="chips" style="flex-wrap:wrap;padding-top:8px">${arr.map((t) => `<a class="chip" href="#research/${esc(t)}">${esc(t)}</a>`).join("")}</div>`;
+    fill("#rhome", `${rec.length ? `<div class="sec"><h2 class="h2">Recent</h2></div><div style="padding:0 16px">${chips(rec)}</div>` : ""}
+      ${held.length ? `<div class="sec"><h2 class="h2">In your models</h2></div><div style="padding:0 16px">${chips(held)}</div>` : ""}
+      <div class="sec"><h2 class="h2">Watchlist</h2></div><div id="rwatch" style="padding:0 16px">${spinner()}</div>
+      <p class="tiny muted" style="margin:18px 20px 0;line-height:1.45">Every stock and fund gets the same page: price and returns vs the S&P 500, valuation, the business, the Street's view, options flow, and insider and government trades.</p>`);
+    api("/watchlist").then((w) => fill("#rwatch", chips(w.map((x) => x.t)))).catch(() => fill("#rwatch", ""));
+  };
+  home();
+  let tm; const run = async () => { const v = $("#rq").value.trim(); if (!v) { fill("#rr", ""); return; }
+    try { const r = await api("/search?q=" + encodeURIComponent(v));
+      fill("#rr", r.length ? `<div class="card pad0" style="margin-top:10px">${r.map((x) => `<a class="li" href="#research/${esc(x.t)}">${logo(x.t, 30)}<div class="grow1"><div style="font-weight:700">${esc(x.t)}</div><div class="small muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.n || "")}</div></div>${x.last ? `<div style="text-align:right"><div class="n" style="font-weight:600">${F.px(x.last)}</div><div class="n tiny ${F.cls(x.changepct)}">${F.chg(x)}</div></div>` : ""}<span class="muted">›</span></a>`).join("")}</div>`
+        : `<p class="small muted" style="margin:10px 20px">No match. Try the ticker.</p>`); } catch (e) { fill("#rr", err(e)); } };
+  $("#rq").oninput = () => { clearTimeout(tm); tm = setTimeout(run, 300); };
+  $("#rq").onkeydown = (e) => { if (e.key === "Enter") { const v = $("#rq").value.trim().replace("$", ""); if (/^[A-Za-z.\-]{1,6}$/.test(v)) location.hash = "#research/" + v.toUpperCase(); else run(); } };
+}
+
+function plusSheet(d) {
+  const s = sheet(`<div style="padding:0 18px"><h2 class="h2">${esc(d.ticker)}</h2><p class="small muted" style="margin:4px 0 0">${esc(d.name)}</p>
+    <button class="li" id="pm" style="width:100%;background:none;border:0;cursor:pointer;text-align:left;margin-top:8px"><span style="font-size:22px;width:34px">📊</span><div class="grow1"><div style="font-weight:600">Add to a model</div><div class="tiny muted">Pick the model and a target weight</div></div><span class="muted">›</span></button>
+    <button class="li" id="pw" style="width:100%;background:none;border:0;cursor:pointer;text-align:left"><span style="font-size:22px;width:34px">${d.watch ? "✓" : "👁"}</span><div class="grow1"><div style="font-weight:600">${d.watch ? "Remove from watchlist" : "Add to watchlist"}</div><div class="tiny muted">The bots watch everything on it</div></div></button>
+    <button class="li" id="pc" style="width:100%;background:none;border:0;cursor:pointer;text-align:left"><span style="font-size:22px;width:34px">⚖️</span><div class="grow1"><div style="font-weight:600">${isFundD(d) ? "Compare with another fund" : "Compare with another stock or fund"}</div><div class="tiny muted">${isFundD(d) ? "Similar funds, or any symbol" : "Side by side: returns, valuation, risk"}</div></div><span class="muted">›</span></button>
+    <div id="pbody"></div></div>`);
+  $("#pw", s).onclick = async () => { try { await api("/watchlist", { body: { ticker: d.ticker, remove: d.watch } }); d.watch = !d.watch; MEMR[d.ticker] = null; toast(d.watch ? "Added to watchlist" : "Removed from watchlist"); s.remove(); } catch (e) { toast(e.message); } };
+  $("#pm", s).onclick = async () => { const ms = await getModels();
+    fill("#pbody", `<div class="eyebrow" style="margin-top:14px">Which model</div>${ms.map((m, i) => `<label class="li" style="cursor:pointer"><input type="radio" name="pmm" value="${m.id}" ${i === 0 ? "checked" : ""} style="width:20px;height:20px"><div class="grow1" style="font-weight:600">${esc(m.name)}</div>${(m.holdings || []).find((h) => h.t === d.ticker) ? `<span class="tiny muted">already ${F.bps(m.holdings.find((h) => h.t === d.ticker).w)}</span>` : ""}</label>`).join("")}
+      <div class="row" style="gap:10px;margin-top:12px"><div class="field" style="flex:1;height:48px"><input id="pmw" inputmode="decimal" placeholder="Target weight" value="5"><span class="muted">%</span></div>
+      <button class="btn primary" id="pmgo" style="flex:1">Add</button></div>
+      <p class="tiny muted" style="margin:8px 0 0">Opens the model with ${esc(d.ticker)} added so you can trim the others to 100% and save.</p>`);
+    $("#pmgo", s).onclick = () => { const id = (s.querySelector('input[name="pmm"]:checked') || {}).value; const w = Number($("#pmw", s).value); if (!id || !(w > 0 && w <= 100)) return toast("Pick a model and a weight.");
+      try { sessionStorage.setItem("odesa_add", JSON.stringify({ id, t: d.ticker, n: d.name, w })); } catch (_) {} s.remove(); location.hash = "#manager/" + id; }; };
+  $("#pc", s).onclick = () => { const peers = ((d.street && d.street.fund && d.street.fund.peers) || []).filter((p2) => p2 && p2.t);
+    fill("#pbody", `${peers.length ? `<div class="eyebrow" style="margin-top:14px">Similar funds</div>${peers.map((p2) => `<button class="li" data-c="${esc(p2.t)}" style="width:100%;background:none;border:0;cursor:pointer;text-align:left">${logo(p2.t, 28)}<div class="grow1"><div style="font-weight:700">${esc(p2.t)} <span class="small muted" style="font-weight:500">${esc(p2.n || "")}</span></div>${p2.why ? `<div class="tiny muted">${esc(p2.why)}</div>` : ""}</div><span class="muted">›</span></button>`).join("")}` : ""}
+      <div class="eyebrow" style="margin-top:14px">${peers.length ? "Or type a symbol" : "Compare with"}</div>
+      <div class="field grey" style="margin-top:8px">${ICON.search}<input id="pcq" placeholder="${isFundD(d) ? "Fund symbol (e.g. VFIAX)" : "Ticker (e.g. SPY)"}" autocapitalize="characters"></div>
+      <div class="chips" style="flex-wrap:wrap;padding:8px 0 0">${["SPY", "QQQ", ...recentGet().filter((x) => x !== d.ticker && !peers.find((p2) => p2.t === x)).slice(0, 5)].map((t) => `<button class="chip" data-c="${esc(t)}">${esc(t)}</button>`).join("")}</div>`);
+    const go = (u) => { u = String(u || "").trim().toUpperCase().replace("$", ""); if (!/^[A-Z.\-]{1,6}$/.test(u)) return toast("Enter a ticker."); s.remove(); location.hash = `#compare/${d.ticker}/${u}`; };
+    if (!peers.length) $("#pcq", s).focus(); $("#pcq", s).onkeydown = (e) => { if (e.key === "Enter") go($("#pcq", s).value); }; s.querySelectorAll("[data-c]").forEach((b) => b.onclick = () => go(b.dataset.c)); };
+}
+
+const RANGES = [["1M", 1 / 12], ["6M", 0.5], ["1Y", 1], ["5Y", 5], ["10Y", 10]];
+function sliceYears(px, y) { const d = new Date(); d.setTime(d.getTime() - y * 365.25 * 86400000); const cut = d.toISOString().slice(0, 10); let i = 0; for (let k = 0; k < px.length; k++) if (px[k][0] <= cut) i = k; return px.slice(i); }
+function align(a, b) { const m = new Map(b); let last = null; return a.map(([d]) => { if (m.has(d)) last = m.get(d); return last; }); }
+
+async function vProfile(t) {
+  t = String(t).toUpperCase(); recentAdd(t);
+  page(`${hdr("", { back: "hist", right: `<button class="plus" id="rplus" aria-label="Add or compare" style="width:40px;height:40px;border-radius:20px;border:0;background:var(--brass);color:#fff;font-size:24px;font-weight:600;cursor:pointer;line-height:1">＋</button>` })}<div id="rp">${spinner("Pulling it together")}</div>`, "research");
+  let d; try { d = await getProfile(t); } catch (e) { return fill("#rp", err(e)); }
+  const st = { range: "1Y", vsSpy: false, tab: d.kind === "fund" ? "fund" : "biz" };
+  $("#rplus").onclick = () => plusSheet(d);
+  const q = d.quote || {};
+  const draw = () => {
+    const R = d.returns || { t: {}, spy: {} };
+    const isF = isFundD(d); const FD = (d.street && d.street.fund) || {};
+    const hasFlow = d.flow && (d.flow.pcr !== null || (d.flow.alerts || []).length);
+    const tabs = isF ? [["fund", "Holdings"], ["sectors", "Sectors"], ...(hasFlow ? [["flow", "Flow"]] : [])] : [["biz", "Business"], ["street", "Street"], ["flow", "Flow"], ["people", "Insiders"]];
+    if (isF && !tabs.find((x) => x[0] === st.tab)) st.tab = "fund";
+    if (!isF && !tabs.find((x) => x[0] === st.tab)) st.tab = "biz";
+    const FT = isF ? fundTop(d) : null; const FR = isF ? fundRet(d) : null;
+    const rng = d.range || {};
+    const pos = (v) => rng.hi && rng.lo && v !== null && v !== undefined ? Math.max(0, Math.min(100, (v - rng.lo) / (rng.hi - rng.lo) * 100)) : null;
+    fill("#rp", `
+      <div style="padding:10px 20px 0" class="row"><div style="width:52px;height:52px;border-radius:14px;overflow:hidden;background:#fff;flex:none;display:flex;align-items:center;justify-content:center">${logo(t, 52)}</div>
+        <div style="margin-left:12px;min-width:0"><div class="small muted" style="font-weight:700">${esc(t)}${isF ? [FD.category || d.sector, FD.family, FD.aum ? F.money(FD.aum) + " in assets" : ""].filter(Boolean).map((x) => " · " + esc(x)).join("") : (d.sector ? " · " + esc(d.sector) : "") + (d.mcap ? " · " + sizeName(d.mcap) : "")}</div>
+          <div style="font-size:21px;font-weight:700;letter-spacing:-.02em;line-height:1.2">${esc(d.name)}</div></div></div>
+      <div style="padding:12px 20px 0"><span class="big n">${F.px(d.last)}</span>${isF && !d.quote && FD.nav ? `<span class="tiny muted"> NAV${FD.nav_date ? " · " + F.date(FD.nav_date) : ""}</span>` : ""} ${d.quote ? `<span class="n ${F.cls(q.changepct)}" style="font-weight:600;margin-left:6px">${q.change !== undefined && q.change !== null ? (q.change >= 0 ? "+" : "−") + "$" + Math.abs(q.change).toFixed(2) + " · " : ""}${F.chg(q)} today</span>` : ""}</div>
+      ${d.about ? `<p style="margin:8px 20px 0;font-size:15px;line-height:1.4;color:var(--gray)">${esc(d.about)}</p>` : ""}
+      ${d.models.length || d.watch ? `<div class="chips" style="padding-top:10px">${d.models.map((m) => `<a class="chip" href="#portfolio/${m.id}" style="background:#F5EEE2;border-color:#E8DCC4;color:var(--brass-t)">In ${esc(m.model)} · ${F.bps(m.w)}</a>`).join("")}${d.watch ? `<span class="chip">On watchlist ✓</span>` : ""}</div>` : ""}
+      ${isF && d.street_pending && !d.street ? `<div class="card"><div class="empty" style="padding:12px 8px"><span class="spin"></span><div style="margin-top:8px">Gathering ratings, fees and managers. About a minute the first time.</div></div></div>` : ""}
+      ${isF ? FT.rating : ""}
+      <div class="cols"><div>
+      <div style="${(d.prices || []).length < 2 ? "display:none" : ""}"><div class="card" style="padding:10px 6px 4px"><div id="rchart"></div></div>
+      <div class="row" style="margin:10px 16px 0;gap:8px"><div class="seg light" style="flex:1">${RANGES.map(([k]) => `<button class="${st.range === k ? "on" : ""}" data-rg="${k}">${k}</button>`).join("")}</div>
+        <button class="chip ${st.vsSpy ? "on" : ""}" id="rvs" style="height:38px">vs S&P</button></div></div>
+      <div class="card"><div class="row between"><div class="eyebrow">Returns vs S&P 500</div><span class="tiny muted">per year · ${FR && FR.total ? "total return" : "price only"}</span></div>
+        <div style="display:grid;grid-template-columns:minmax(64px,1fr) repeat(4,minmax(0,1fr));gap:8px 4px;margin-top:10px;align-items:center;font-size:15px">
+          <span></span>${["1Y", "3Y", "5Y", "10Y"].map((k) => `<span class="tiny muted" style="text-align:right;font-weight:700">${k}</span>`).join("")}
+          <b>${esc(t)}</b>${["1Y", "3Y", "5Y", "10Y"].map((k) => { const v = (FR || R).t[k]; return `<span class="n ${F.cls(v)}" style="text-align:right;font-weight:700">${pctS(v)}</span>`; }).join("")}
+          ${FR && Object.values(FR.cat).some((v) => v !== null) ? `<span class="muted">Category</span>${["1Y", "3Y", "5Y", "10Y"].map((k) => `<span class="n muted" style="text-align:right">${pctS(FR.cat[k])}</span>`).join("")}` : ""}
+          <span class="muted">S&P</span>${["1Y", "3Y", "5Y", "10Y"].map((k) => `<span class="n muted" style="text-align:right">${pctS(R.spy[k])}</span>`).join("")}</div>
+        ${FR && FR.total ? `<p class="tiny muted" style="margin:8px 0 0">Fund figures are total returns from the fund's published data; loads not deducted.</p>` : ""}
+        ${d.history_from && d.history_from > new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10) ? `<p class="tiny muted" style="margin:8px 0 0">Trading since ${F.date(d.history_from)}; longer periods fill in as it ages.</p>` : ""}</div>
+      </div><div>
+      ${isF ? FT.fees + FT.mgr : ""}
+      <div class="card" style="${isF ? "display:none" : ""}"><div class="grid2" style="gap:16px 10px">
+        ${[["Market cap", F.money(d.mcap)], [isF ? "P/E (holdings)" : "P/E · trailing / fwd", `${xx(d.pe)} <span class="muted" style="font-weight:500">/</span> ${xx(d.fpe)}`],
+           [isF ? "Yield" : "Dividend yield", pctU(isF && d.street && d.street.fund && d.street.fund.yield !== null ? (d.street.fund.yield > 1 ? d.street.fund.yield / 100 : d.street.fund.yield) : d.dy, 2)], ["Beta", d.beta !== null && d.beta !== undefined ? d.beta.toFixed(2) : "–"],
+           ["Short interest", pctU(d.short)], [isF ? "Expense ratio" : "Next earnings", isF ? (d.street && d.street.fund && d.street.fund.expense_ratio !== null && d.street.fund.expense_ratio !== undefined ? (d.street.fund.expense_ratio > 0.05 ? d.street.fund.expense_ratio.toFixed(2) + "%" : (d.street.fund.expense_ratio * 100).toFixed(2) + "%") : "–") : d.next_er ? F.date(d.next_er) : "–"]]
+          .map(([a, b]) => `<div><div class="tiny muted" style="font-weight:600">${a}</div><div class="n" style="font-size:19px;font-weight:700;margin-top:3px">${b}</div></div>`).join("")}</div></div>
+      ${rng.hi ? `<div class="card"><div class="eyebrow">52-week range</div>
+        <div style="position:relative;height:30px;margin-top:14px"><div style="position:absolute;left:0;right:0;top:12px;height:6px;border-radius:3px;background:linear-gradient(90deg,#F3D9D5,#E8EDE9,#D5EBDB)"></div>
+          ${[["50-day", rng.sma50, "var(--gray2)"], ["200-day", rng.sma200, "var(--brass)"]].filter((x) => pos(x[1]) !== null).map(([l, v, c]) => `<i title="${l}" style="position:absolute;left:${pos(v)}%;top:6px;width:2px;height:18px;background:${c};border-radius:1px"></i>`).join("")}
+          ${pos(rng.last) !== null ? `<i style="position:absolute;left:calc(${pos(rng.last)}% - 8px);top:7px;width:16px;height:16px;border-radius:8px;background:var(--navy);border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.25)"></i>` : ""}</div>
+        <div class="row between small n" style="margin-top:4px"><span>${F.px(rng.lo)}</span><span class="muted">now ${F.px(rng.last)}</span><span>${F.px(rng.hi)}</span></div>
+        <div class="tiny muted" style="margin-top:6px"><span style="color:var(--gray2)">▍</span> 50-day ${F.px(rng.sma50)} &nbsp; <span style="color:var(--brass)">▍</span> 200-day ${F.px(rng.sma200)}${rng.hi && rng.last ? ` &nbsp;·&nbsp; ${pctS(rng.last / rng.hi - 1)} from high` : ""}</div></div>` : ""}
+      </div></div>
+      ${isF ? "" : `<div id="rearn"></div>`}
+      <div class="seg light" style="margin:16px 16px 0">${tabs.map(([k, l]) => `<button class="${st.tab === k ? "on" : ""}" data-tb="${k}">${l}</button>`).join("")}</div>
+      <div id="rtab">${tabHtml(d, st.tab)}</div>
+      <div class="card" id="rsum"><div class="row between"><h2 class="h2">What's being said</h2><span class="tiny muted" id="rsum-at"></span></div><div id="rsum-b">${spinner()}</div></div>
+      ${d.filings && d.filings.length ? `<div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Filings</h2></div>${d.filings.map((f) => `<a class="li" href="${esc(safeUrl(f.url) || "#")}" target="_blank" rel="noopener"><span class="pill" style="background:var(--soft)">${esc(f.form)}</span><div class="grow1 small">${esc(f.desc || f.items || "")}</div><span class="tiny muted">${F.date(f.filed)}</span></a>`).join("")}</div>` : ""}
+      <div class="grid2" style="margin:14px 16px 0"><button class="btn primary" id="rplus2">＋ Add or compare</button><button class="btn ghost" id="ropal">Ask Opal</button></div>
+      <p class="tiny muted" style="margin:12px 20px 0;line-height:1.4">Prices: MarketData · Flow & screens: Unusual Whales · Financials: ROIC · Street & fund facts: public sources via Grok, refreshed weekly${d.street ? " (" + F.date(d.street.at.slice(0, 10)) + ")" : ""}. Research, not advice.</p>`);
+    drawChart();
+    $$("[data-rg]").forEach((b) => b.onclick = () => { st.range = b.dataset.rg; $$("[data-rg]").forEach((x) => x.classList.toggle("on", x === b)); drawChart(); });
+    $("#rvs").onclick = () => { st.vsSpy = !st.vsSpy; $("#rvs").classList.toggle("on", st.vsSpy); drawChart(); };
+    $$("[data-tb]").forEach((b) => b.onclick = () => { st.tab = b.dataset.tb; $$("[data-tb]").forEach((x) => x.classList.toggle("on", x === b)); fill("#rtab", tabHtml(d, st.tab)); });
+    $("#rplus2").onclick = () => plusSheet(d);
+    $("#ropal").onclick = async () => { const r = await api("/opal", { body: { q: `What is driving ${t} right now, and what comes next for it and its suppliers and competitors?` } }); location.hash = "#opal/run/" + r.id; };
+    const sum = (s) => { fill("#rsum-at", s.at ? (F.ago(s.at) === "now" ? "just now" : F.ago(s.at) + " ago") : ""); fill("#rsum-b", [["X", "On X", s.x], ["T", "Latest news", s.news], ["E", "Last call", s.call]].filter((x) => x[2]).map(([k, h, v]) => `<div style="display:grid;grid-template-columns:26px 1fr;gap:10px;padding-top:12px">${dot(k === "E" ? "T" : k, 26)}<div><div class="small muted" style="font-weight:700">${h}</div><div style="font-size:15px;line-height:1.35">${esc(v)}</div></div></div>`).join("")
+      + `<button class="btn small soft" id="rs-re" style="margin-top:12px">Refresh</button>`); $("#rs-re").onclick = () => { fill("#rsum-b", spinner()); api(`/stock/${t}/summary?force=1`).then(sum).catch((e) => fill("#rsum-b", err(e))); }; };
+    api(`/stock/${t}/summary`).then(sum).catch((e) => fill("#rsum-b", err(e)));
+    if (!isF) loadEarnings(d, st);
+  };
+  const drawChart = () => {
+    const el = $("#rchart"); if (!el) return; const y = RANGES.find((r) => r[0] === st.range)[1];
+    const px = sliceYears(d.prices || [], y); if (px.length < 2) { el.innerHTML = `<div class="empty" style="padding:40px 10px">${isFundD(d) ? "Daily prices aren't available for this fund from our price feed; returns below come from the fund's published figures." : "No price history yet."}</div>`; return; }
+    const a0 = px[0][1], up = px[px.length - 1][1] >= a0, color = up ? "var(--up)" : "var(--down)";
+    const pts = px.map(([dd, c]) => ({ y: c, label: F.date(dd) + (y > 1 ? " '" + dd.slice(2, 4) : "") }));
+    const series = [{ pts, color }];
+    if (st.vsSpy && d.spy && d.spy.length) { const sp = align(px, d.spy); const s0 = sp.find((v) => v) || 1; series.push({ pts: sp.map((v, i) => ({ y: (v || s0) / s0 * a0, label: pts[i].label })), color: "var(--brass)", dash: true }); }
+    lineChart(el, series, { h: 200, baseline: a0 });
+  };
+  draw();
+  if (d.street_pending && !d.street) { let n = 0; const poll = setInterval(async () => { n++; if (!$("#rtab") || n > 9) return clearInterval(poll);
+    try { const r = await api(`/research/${t}/street`); if (r.street) { clearInterval(poll); d.street = r.street; d.street_pending = false; if (!d.about) d.about = r.street.about; MEMR[t] = null; draw(); } } catch (_) {} }, 20000); }
+}
+
+function tabHtml(d, tab) {
+  const S = d.street || {}; const pend = d.street_pending && !d.street;
+  const wait = `<div class="card"><div class="empty" style="padding:16px 8px"><span class="spin"></span><div style="margin-top:10px">Gathering this from public sources. It takes about a minute the first time, then it's saved for the week.</div></div></div>`;
+  const kv = (rows) => `<div class="card"><div class="grid2" style="gap:16px 10px">${rows.map(([a, b, c]) => `<div><div class="tiny muted" style="font-weight:600">${a}</div><div class="n" style="font-size:19px;font-weight:700;margin-top:3px">${b}</div>${c ? `<div class="tiny muted" style="margin-top:2px">${c}</div>` : ""}</div>`).join("")}</div></div>`;
+  if (tab === "biz") {
+    const f = d.fin; if (!f) return `<div class="card"><div class="empty">No financial statements found for ${esc(d.ticker)}.</div></div>`;
+    const qs = f.quarters.slice(-8); const maxR = Math.max(...qs.map((x) => Math.abs(x.rev || 0)), 1);
+    const debt = S.total_debt ?? null, cash = f.cash;
+    return `${kv([["Revenue · last 12 mo", F.money(f.ttm.rev), f.ttm.rev_g !== null ? `<span class="${F.cls(f.ttm.rev_g)}">${pctS(f.ttm.rev_g)} vs prior year</span>` : ""],
+        ["EPS · last 12 mo", f.ttm.eps !== null ? "$" + f.ttm.eps.toFixed(2) : "–", "diluted"], ["Operating margin", pctU(f.ttm.opm), "last 12 months"],
+        ["Gross margin", pctU(S.gross_margin !== null && S.gross_margin !== undefined ? (S.gross_margin > 1 ? S.gross_margin / 100 : S.gross_margin) : null), S.gross_margin !== undefined ? "" : pend ? "gathering…" : ""],
+        ["Free cash flow · 12 mo", F.money(f.ttm.fcf), ""], ["Cash & investments", F.money(cash), qs.length ? "as of " + F.date(qs[qs.length - 1].date) : ""]])}
+      ${cash !== null && debt !== null ? `<div class="card"><div class="row between"><div class="eyebrow">Cash vs debt</div><b class="n ${cash - debt >= 0 ? "up" : "down"}">${cash - debt >= 0 ? "Net cash " : "Net debt "}${F.money(Math.abs(cash - debt))}</b></div>
+        <div style="display:flex;height:10px;border-radius:5px;overflow:hidden;margin-top:12px;gap:2px"><i style="flex:${cash};background:var(--up)"></i><i style="flex:${debt};background:#D8B4AE"></i></div>
+        <div class="row between small" style="margin-top:6px"><span>Cash ${F.money(cash)}</span><span class="muted">Debt ${F.money(debt)}</span></div></div>` : ""}
+      <div class="card"><div class="row between"><div class="eyebrow">Quarterly revenue</div><span class="tiny muted">EPS below</span></div>
+        <div style="display:grid;grid-template-columns:repeat(${qs.length},1fr);gap:6px;align-items:end;height:120px;margin-top:12px">${qs.map((x) => `<div style="display:flex;flex-direction:column;justify-content:flex-end;height:100%"><div class="tiny n" style="text-align:center;font-weight:600;margin-bottom:3px">${F.money(x.rev).replace("$", "")}</div><i style="display:block;height:${Math.max(3, Math.abs(x.rev || 0) / maxR * 82)}px;background:var(--navy);border-radius:5px 5px 2px 2px;opacity:${x === qs[qs.length - 1] ? 1 : .55}"></i></div>`).join("")}</div>
+        <div style="display:grid;grid-template-columns:repeat(${qs.length},1fr);gap:6px;margin-top:6px">${qs.map((x) => `<div style="text-align:center"><div class="tiny n ${F.cls(x.eps)}" style="font-weight:700">${x.eps !== null ? (x.eps < 0 ? "−" : "") + "$" + Math.abs(x.eps).toFixed(2) : "–"}</div><div class="tiny muted" style="font-size:10px">${esc(x.label || F.date(x.date))}</div></div>`).join("")}</div></div>
+`;
+  }
+  if (tab === "street") {
+    if (pend) return wait; if (!d.street) return `<div class="card"><div class="empty">No analyst coverage found.</div></div>`;
+    const up = S.target_avg && d.last ? S.target_avg / d.last - 1 : null;
+    const pos = (v) => S.target_high && S.target_low && S.target_high > S.target_low ? Math.max(0, Math.min(100, (v - S.target_low) / (S.target_high - S.target_low) * 100)) : null;
+    const act = (a) => /raise|upgrad|initiat/.test(a || "") ? "up" : /lower|downgrad|cut/.test(a || "") ? "down" : "muted";
+    return `${kv([["Consensus", esc(S.consensus || "–"), S.analysts ? S.analysts + " analysts" : ""], ["Average target", S.target_avg ? F.px(S.target_avg) : "–", up !== null ? `<span class="${F.cls(up)}">${pctS(up)} from here</span>` : ""],
+        ["Short interest", pctU(d.short), "of float"], ["Range of targets", S.target_low && S.target_high ? `${F.px(S.target_low).replace(".00", "")}–${F.px(S.target_high).replace(".00", "")}` : "–", ""]])}
+      ${pos(d.last) !== null ? `<div class="card"><div class="eyebrow">Where the price sits in the targets</div><div style="position:relative;height:26px;margin-top:12px"><div style="position:absolute;left:0;right:0;top:10px;height:6px;border-radius:3px;background:var(--soft)"></div>
+        <i style="position:absolute;left:calc(${pos(S.target_avg)}% - 1px);top:4px;width:2px;height:18px;background:var(--brass)"></i><i style="position:absolute;left:calc(${pos(d.last)}% - 8px);top:5px;width:16px;height:16px;border-radius:8px;background:var(--navy);border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.25)"></i></div>
+        <div class="row between tiny muted"><span>Low ${F.px(S.target_low)}</span><span style="color:var(--brass-t)">avg ${F.px(S.target_avg)}</span><span>High ${F.px(S.target_high)}</span></div></div>` : ""}
+      ${(S.recent || []).length ? `<div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Recent rating changes</h2></div>${S.recent.map((r) => `<div class="li" style="cursor:default"><div class="grow1"><div style="font-weight:700">${esc(r.firm || "")}</div><div class="tiny muted">${esc(r.rating || "")}${r.action ? " · " + esc(r.action) : ""}</div></div>
+        <div style="text-align:right"><div class="n" style="font-weight:700">${r.from && r.to && r.from !== r.to ? `<span class="muted" style="text-decoration:line-through;font-weight:500">${F.px(r.from).replace(".00", "")}</span> → ` : ""}<span class="${act(r.action)}">${r.to ? F.px(r.to).replace(".00", "") : ""}</span></div><div class="tiny muted">${r.date ? F.date(r.date) : ""}</div></div></div>`).join("")}</div>` : ""}`;
+  }
+  if (tab === "sectors") { if (pend) return wait; const f = (S.fund || {}); const wv = (w) => w === null || w === undefined ? 0 : w > 1 ? w : w * 100;
+    return (f.sectors || []).length ? `<div class="card">${f.sectors.slice(0, 12).map((x) => `<div style="margin-top:10px"><div class="row between small"><span style="font-weight:600">${esc(x.name)}</span><b class="n">${wv(x.w).toFixed(1)}%</b></div><div style="height:7px;border-radius:4px;background:var(--soft);margin-top:4px;overflow:hidden"><i style="display:block;height:100%;width:${Math.min(100, wv(x.w))}%;background:var(--navy);border-radius:4px"></i></div></div>`).join("")}</div>` : `<div class="card"><div class="empty">No sector breakdown found.</div></div>`; }
+  if (tab === "fund") {
+    if (pend) return wait; const f = (S.fund || {});
+    const er = f.expense_ratio !== null && f.expense_ratio !== undefined ? (f.expense_ratio > 0.05 ? f.expense_ratio.toFixed(2) + "%" : (f.expense_ratio * 100).toFixed(2) + "%") : "–";
+    const wv = (w) => w === null || w === undefined ? 0 : w > 1 ? w : w * 100;
+    const top5 = (f.top || []).slice(0, 5).reduce((s2, h) => s2 + wv(h.w), 0);
+    return `${kv([["Holdings", f.holdings ? Number(f.holdings).toLocaleString() : "–", top5 ? `top 5 = ${top5.toFixed(1)}% of assets` : ""], ["Tracks", esc(f.index || "Actively managed"), ""],
+        ["Since", f.inception ? new Date(f.inception + "T12:00:00").getFullYear() : "–", esc(f.asset_class || "")], ["Assets", F.money(f.aum), ""]])}
+      ${(f.top || []).length ? `<div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Top holdings</h2></div>${f.top.map((h) => `<a class="li" href="#research/${esc(h.t || "")}">${logo(h.t || "", 28)}<div class="grow1"><div style="font-weight:700">${esc(h.t || "")}</div><div class="tiny muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(h.n || "")}</div></div><b class="n">${wv(h.w).toFixed(1)}%</b></a>`).join("")}</div>` : ""}
+`;
+  }
+  if (tab === "flow") {
+    const fl = d.flow || {};
+    return `${kv([["Put / call ratio", fl.pcr !== null && fl.pcr !== undefined ? fl.pcr.toFixed(2) : "–", fl.pcr !== null && fl.pcr !== undefined ? (fl.pcr < 0.7 ? "leaning calls" : fl.pcr > 1.2 ? "leaning puts" : "balanced") : ""],
+        ["IV rank", fl.ivr !== null && fl.ivr !== undefined ? Math.round(fl.ivr) : "–", fl.iv ? "IV " + (fl.iv * 100).toFixed(0) + "%" : ""],
+        ["Call premium today", `<span class="up">${F.money(fl.callp)}</span>`, ""], ["Put premium today", `<span class="down">${F.money(fl.putp)}</span>`, ""],
+        ["Expected move · 30 days", fl.move30 ? "±" + (fl.move30 * 100).toFixed(1) + "%" : "–", "from options prices"], ["Bullish vs bearish $", fl.bull || fl.bear ? `${F.money(fl.bull)} / ${F.money(fl.bear)}` : "–", ""]])}
+      <div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Big option trades</h2></div>${(fl.alerts || []).length ? fl.alerts.map((a) => `<div class="li" style="cursor:default"><span class="pill" style="background:${a.kind === "call" ? "#E6F2E9" : "#FBE9E6"};color:${a.kind === "call" ? "var(--up)" : "var(--down)"}">${a.kind === "call" ? "Call" : "Put"}</span>
+        <div class="grow1"><div style="font-weight:600">${a.strike ? "$" + a.strike : ""} ${a.expiry ? F.date(a.expiry) : ""}${a.sweep ? " · sweep" : ""}</div><div class="tiny muted">${esc(a.side || "")}${a.ts ? " · " + F.ago(a.ts) + " ago" : ""}</div></div><b class="n">${F.money(a.premium)}</b></div>`).join("") : `<div class="empty">No large trades flagged lately.</div>`}</div>
+      <p class="tiny muted" style="margin:8px 20px 0">Big trades can be hedges. Read them as interest, not direction.</p>`;
+  }
+  const P = d.people || { congress: [], insiders: [], gov: [] };
+  const row = (who, sub, what, cls, when) => `<div class="li" style="cursor:default"><div class="grow1"><div style="font-weight:700">${esc(who || "")}</div><div class="tiny muted">${esc(sub || "")}</div></div><div style="text-align:right"><div class="small ${cls}" style="font-weight:600">${what}</div><div class="tiny muted">${when}</div></div></div>`;
+  const lag = (a, b) => a && b ? Math.round((Date.parse(b) - Date.parse(a)) / 86400000) : null;
+  return `<div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Insiders</h2></div>${P.insiders.length ? P.insiders.map((x) => row(x.who, x.role, `${x.buy ? "Bought" : "Sold"} ${x.shares ? Math.round(x.shares).toLocaleString() + " sh" : ""}${x.price ? " @ $" + x.price : ""}`, x.buy ? "up" : "down", `${x.traded ? F.date(x.traded) : ""}${lag(x.traded, x.filed) !== null ? " · filed " + lag(x.traded, x.filed) + "d later" : ""}`)).join("") : `<div class="empty">No insider filings found.</div>`}</div>
+    <div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Congress</h2></div>${P.congress.length ? P.congress.map((x) => row(x.who, x.chamber, `${esc(x.txn || "")} ${esc(x.amount || "")}`, /buy|purchase/i.test(x.txn || "") ? "up" : "down", `${x.traded ? F.date(x.traded) : ""}${lag(x.traded, x.filed) !== null ? " · " + lag(x.traded, x.filed) + "d lag" : ""}`)).join("") : `<div class="empty">No trades by members of Congress.</div>`}</div>
+    ${P.gov.length ? `<div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Lobbying & contracts</h2></div>${P.gov.map((g) => `<div class="li" style="cursor:default"><div class="grow1 small">${esc(g.title)}</div><span class="tiny muted">${F.date(String(g.ts).slice(0, 10))}</span></div>`).join("")}</div>` : ""}
+    <p class="tiny muted" style="margin:8px 20px 0;line-height:1.4">Insiders file within 2 business days; members of Congress can take up to 45 days. These are old news by the time they show up.</p>`;
+}
+
+// ---------------------------------------------------------------- Earnings breakdown (Call Surgeon)
+const ETABS = [["res", "Results"], ["drv", "What drove it"], ["tgt", "Price targets"], ["call", "From the call"], ["down", "Down the line"]];
+const cardGrid = (html) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:10px;margin-top:10px">${html}</div>`;
+const srcLink = (label, url) => url && safeUrl(url) ? `<a href="${esc(safeUrl(url))}" target="_blank" rel="noopener" style="color:inherit">${esc(label)}</a>` : esc(label || "");
+function earnSection(d, E, tab) {
+  const r = E.result || {}; const inM = d.models || [];
+  const beatCol = (b) => b === "beat" ? "var(--up)" : b === "miss" ? "var(--down)" : "#D5D7DB";
+  let body = "";
+  if (tab === "res") {
+    body = `<div class="eyebrow" style="margin-top:14px">Results vs Street <span style="text-transform:none;letter-spacing:0;font-weight:500;font-style:italic">Actuals from the 8-K; Street figures are estimates</span></div>
+      ${cardGrid((r.results || []).map((x) => `<div style="background:#fff;border:1px solid var(--line);border-left:4px solid ${beatCol(x.beat)};border-radius:14px;padding:12px 14px">
+        <div class="small" style="font-weight:600">${esc(x.metric || "")}</div><div class="n" style="font-size:24px;font-weight:700;margin-top:2px">${esc(x.actual || "–")}</div>
+        ${x.est ? `<div class="small" style="font-weight:700;color:${x.beat === "miss" ? "var(--down)" : x.beat === "beat" ? "var(--up)" : "var(--gray)"};margin-top:2px">${x.beat === "beat" ? "Beat by " : x.beat === "miss" ? "Missed by " : "In line · "}${esc(x.surprise || "")}</div>
+          <div class="tiny muted" style="margin-top:4px;line-height:1.4">Street est. ${esc(x.est)} · ${srcLink(x.est_source, x.est_url)}${x.est_date ? " · as of " + F.date(x.est_date) : ""}${x.est_label ? `<br>${esc(x.est_label)}` : ""}</div>
+          ${(x.others || []).length ? `<div class="tiny muted" style="line-height:1.4">Other estimates: ${x.others.map((o) => `${esc(o.value)} (${srcLink(o.source, o.url)})`).join(", ")}</div>` : ""}`
+          : `<div class="tiny muted" style="font-style:italic;margin-top:4px">Street estimate not available</div>`}
+        ${x.yoy ? `<div class="tiny" style="margin-top:4px">${esc(x.yoy)}</div>` : ""}<div class="tiny muted">${x.prior_q ? "Prior quarter " + esc(x.prior_q) : "Prior quarter not stated"}</div>
+        ${x.derived ? `<span class="pill" style="background:var(--soft);margin-top:6px;font-weight:600">Derived from 8-K</span>` : ""}${x.note ? `<div class="tiny" style="margin-top:6px;background:#F5EEE2;border-radius:8px;padding:5px 8px;color:var(--brass-t)">${esc(x.note)}</div>` : ""}</div>`).join(""))}
+      ${(r.guidance || []).length ? `<div class="eyebrow" style="margin-top:18px">Guidance · what they expect next</div>${r.guidance.map((g) => `<div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line);gap:10px"><div class="grow1"><div style="font-weight:600">${esc(g.item || "")}</div>${g.note ? `<div class="tiny muted">${esc(g.note)}</div>` : ""}</div>
+        <div style="text-align:right"><div class="n" style="font-weight:700">${esc(g.value || "")}</div>${g.direction ? `<span class="pill" style="background:${/raise|new/.test(g.direction) ? "#E6F2E9" : /cut/.test(g.direction) ? "#FBE9E6" : "var(--soft)"};color:${/raise|new/.test(g.direction) ? "var(--up)" : /cut/.test(g.direction) ? "var(--down)" : "var(--gray)"}">${esc(g.direction)}</span>` : ""}</div></div>`).join("")}` : ""}`;
+  } else if (tab === "drv") {
+    body = `<div class="eyebrow" style="margin-top:14px">What drove it <span style="text-transform:none;letter-spacing:0;font-weight:500;font-style:italic">Segments ranked by $ surprise vs estimate</span></div>
+      ${(r.drivers || []).map((x, i) => { const up = (x.surprise_pct ?? 0) >= 0; return `<div style="border:1px solid var(--line);border-left:4px solid var(--navy);border-radius:14px;padding:12px 14px;margin-top:10px;background:#fff">
+        <div class="row between" style="align-items:flex-start;gap:10px"><div class="grow1"><div><span class="muted" style="font-weight:700;margin-right:8px">${i + 1}</span><b style="font-size:16px">${esc(x.segment || "")}</b>${x.formerly ? ` <span class="tiny muted">(${esc(x.formerly)})</span>` : ""}</div>
+          <div style="height:6px;border-radius:3px;background:var(--soft);margin:8px 0 6px;overflow:hidden"><i style="display:block;height:100%;width:${Math.min(100, x.share_pct || 0)}%;background:var(--navy);border-radius:3px"></i></div>
+          <div class="tiny muted">${x.share_pct !== null && x.share_pct !== undefined ? Number(x.share_pct).toFixed(1) + "% of revenue" : ""}${x.yoy_pct !== null && x.yoy_pct !== undefined ? ` · ${x.yoy_pct >= 0 ? "+" : ""}${Number(x.yoy_pct).toFixed(1)}% YoY` : ""}</div></div>
+          <div class="n" style="font-size:20px;font-weight:700">${esc(x.revenue || "")}</div></div>
+        ${x.surprise ? `<div class="small" style="font-weight:700;color:${up ? "var(--up)" : "var(--down)"};margin-top:6px">Surprise ${up ? "up" : "down"} ${esc(x.surprise)}</div>` : ""}
+        ${x.est ? `<div class="tiny muted" style="margin-top:3px">Segment est. ${esc(x.est)} · ${srcLink(x.est_source, x.est_url)}${x.est_date ? " · as of " + F.date(x.est_date) : ""}</div>` : ""}
+        ${(x.others || []).length ? `<div class="tiny muted">Other estimates: ${x.others.map((o) => `${esc(o.value)} (${srcLink(o.source, o.url)})`).join(", ")}</div>` : ""}
+        ${(Array.isArray(x.detail) ? x.detail : x.detail ? [x.detail] : []).length ? `<details style="margin-top:6px"><summary class="small" style="cursor:pointer;font-weight:600">Segment detail</summary><ul class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.45">${(Array.isArray(x.detail) ? x.detail : [x.detail]).map((y) => `<li>${esc(y)}</li>`).join("")}</ul></details>` : ""}</div>`; }).join("") || `<div class="empty">No segment breakdown reported.</div>`}`;
+  } else if (tab === "tgt") {
+    const T = r.targets || {}; const rows = T.rows || [];
+    body = `<div class="eyebrow" style="margin-top:14px">Analyst price targets <span style="text-transform:none;letter-spacing:0;font-weight:500;font-style:italic">Top ~20 firms first; each row links its source</span></div>
+      <div class="row" style="gap:14px;margin-top:8px;flex-wrap:wrap;align-items:baseline"><span><b class="n" style="font-size:20px">${rows.length || T.raised + T.cut + T.kept || 0}</b> <span class="small">firms acted${T.window ? ` <span class="muted">(${esc(T.window)})</span>` : ""}</span></span>
+        <span><b class="n up" style="font-size:20px">${T.raised ?? 0}</b> <span class="small">raised</span></span><span><b class="n down" style="font-size:20px">${T.cut ?? 0}</b> <span class="small">cut</span></span><span><b class="n" style="font-size:20px">${T.kept ?? 0}</b> <span class="small">kept or rating only</span></span></div>
+      <div style="margin-top:6px">${rows.map((x) => { const ch = x.from && x.to && x.from !== x.to ? x.to / x.from - 1 : null; return `<div class="row between" style="padding:11px 0;border-top:1px solid var(--line);gap:8px">
+        <div class="grow1" style="min-width:0"><div><b>${esc(x.firm || "")}</b> <span class="small muted">${esc(x.analyst || "")}</span></div><div class="tiny muted">${esc(x.rating || "")}</div></div>
+        <div style="text-align:right"><div class="n" style="font-weight:700">${ch !== null ? `<span class="muted" style="text-decoration:line-through;font-weight:500">$${x.from}</span> → ` : ""}$${x.to ?? "–"}</div>
+          <div class="tiny"><span class="n ${ch === null ? "muted" : F.cls(ch)}" style="font-weight:700">${ch !== null ? F.pct(ch * 100, 1) : "kept"}</span> <span class="muted">${x.date ? F.date(x.date) : ""}</span>${x.url && safeUrl(x.url) ? ` · <a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener" class="muted">source</a>` : ""}</div></div></div>`; }).join("") || `<div class="empty">No target changes found.</div>`}</div>`;
+  } else if (tab === "call") {
+    body = `<div class="eyebrow" style="margin-top:14px">Challenges & opportunities <span style="text-transform:none;letter-spacing:0;font-weight:500;font-style:italic">Quotes checked word-for-word against the transcript</span></div>
+      ${cardGrid((r.call || []).map((x) => { const ch = x.kind === "challenge"; return `<div style="background:#fff;border:1px solid var(--line);border-left:4px solid ${ch ? "var(--down)" : "var(--up)"};border-radius:14px;padding:12px 14px">
+        <div class="tiny" style="font-weight:800;letter-spacing:.08em;color:${ch ? "var(--down)" : "var(--up)"}">${ch ? "CHALLENGE" : "OPPORTUNITY"}</div><div style="font-weight:700;font-size:16px;margin-top:3px;line-height:1.3">${esc(x.title || "")}</div>
+        ${x.quote ? `<div style="font-size:14px;line-height:1.45;margin-top:8px">“${esc(x.quote)}”</div>` : `<div class="tiny muted" style="margin-top:6px;font-style:italic">Quote left out: it couldn't be matched word-for-word to the transcript.</div>`}
+        ${x.speaker ? `<div class="tiny muted" style="margin-top:4px">${esc(x.speaker)}</div>` : ""}
+        ${x.why ? `<div class="small" style="margin-top:8px;line-height:1.45"><b>Why it matters:</b> ${esc(x.why)}</div>` : ""}</div>`; }).join("") || `<div class="empty">Nothing flagged.</div>`)}`;
+  } else {
+    const readCol = (x) => /good/i.test(x) ? ["#E6F2E9", "var(--up)"] : /bad/i.test(x) ? ["#FBE9E6", "var(--down)"] : ["#FDF1DE", "var(--amber)"];
+    body = `<div class="eyebrow" style="margin-top:14px">What this could mean down the line <span style="text-transform:none;letter-spacing:0;font-weight:500;font-style:italic">Possible read-throughs, not predictions or advice</span></div>
+      ${cardGrid((r.down_the_line || []).map((x) => { const [bg, fg] = readCol(x.read || ""); return `<a href="#research/${esc(String(x.ticker || "").toUpperCase())}" style="display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid var(--line);border-left:4px solid var(--navy);border-radius:14px;padding:12px 14px">
+        <div class="row" style="gap:6px;flex-wrap:wrap"><b>${esc(x.ticker || "")}</b><span class="small muted">${esc(x.name || "")}</span><span class="pill" style="background:${bg};color:${fg}">${esc(x.read || "")}</span>
+          ${(x.models || []).map((m) => `<span class="pill" style="background:#F5EEE2;color:var(--brass-t)">In ${esc(m.name)} ${F.bps(m.w)}</span>`).join("")}</div>
+        ${x.role ? `<div class="small" style="margin-top:8px;line-height:1.4"><b>${esc(x.relation || "")}:</b> ${esc(x.role)}</div>` : ""}
+        ${x.what ? `<div class="small" style="margin-top:6px;line-height:1.45;color:var(--gray)">${esc(x.what)}</div>` : ""}
+        ${x.fact ? `<div class="tiny muted" style="margin-top:8px;line-height:1.4">Fact from the report: ${esc(x.fact)}${x.url && safeUrl(x.url) ? ` · <span style="text-decoration:underline">source</span>` : ""}</div>` : ""}</a>`; }).join("") || `<div class="empty">No read-throughs.</div>`)}`;
+  }
+  const notes = r.notes || [];
+  return `<div class="card">
+    <div class="row between" style="align-items:flex-start;gap:10px"><div><h2 class="h2">Earnings</h2><div class="tiny muted">Call Surgeon's read of the call, not advice</div></div>${E.newer ? `<button class="chip" id="er-new">Newer call ${F.date(E.newer)} · update</button>` : ""}</div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:10px">${inM.map((m) => `<span class="pill" style="background:#F5EEE2;color:var(--brass-t)">In ${esc(m.model)} · ${F.bps(m.w)}</span>`).join("")}
+      <span class="small muted">${esc(d.name)} · ${esc(r.quarter || "")} earnings${E.call_date ? " · " + F.date(E.call_date) : ""}${r.confidence ? ` · Confidence <b style="color:var(--ink)">${esc(r.confidence)}</b>` : ""}</span></div>
+    ${r.headline ? `<div style="font-size:17px;font-weight:700;line-height:1.35;margin-top:10px">${esc(r.headline)}</div>` : ""}
+    ${r.verdict ? `<div style="font-size:15px;line-height:1.45;margin-top:6px"><b>Verdict:</b> ${esc(r.verdict)}</div>` : ""}
+    <div class="chips" style="padding:12px 0 0;margin:0 -16px;padding-left:16px">${ETABS.map(([k, l]) => `<button class="chip ${tab === k ? "on" : ""}" data-et="${k}">${l}</button>`).join("")}</div>
+    ${body}
+    ${notes.length ? `<details style="margin-top:14px;background:var(--amber-l);border-radius:12px;padding:10px 12px"><summary class="small" style="cursor:pointer;font-weight:600">Notes on the data (${notes.length})</summary><ul class="tiny" style="margin:8px 0 0;padding-left:18px;line-height:1.5">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></details>` : ""}
+    <p class="tiny muted" style="margin:12px 0 0;line-height:1.4">From <b>Call Surgeon</b> · ${E.at ? new Date(E.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · The bot's read plus public Street data, not advice. Check the sources before acting.</p></div>`;
+}
+async function loadEarnings(d, st) {
+  const el = $("#rearn"); if (!el || isFundD(d)) { if (el) el.innerHTML = ""; return; }
+  let E; try { E = await api(`/research/${d.ticker}/earnings`); } catch (e) { el.innerHTML = ""; return; }
+  if (!$("#rearn")) return;
+  const start = async () => { el.innerHTML = `<div class="card"><div class="empty" style="padding:14px 8px"><span class="spin"></span><div style="margin-top:8px">Starting…</div></div></div>`;
+    try { await api(`/research/${d.ticker}/earnings`, { body: {} }); } catch (e) { el.innerHTML = `<div class="card">${err(e)}</div>`; return; } loadEarnings(d, st); };
+  if (E.status === "done") { const paint = () => { el.innerHTML = earnSection(d, E, st.etab || "res");
+      el.querySelectorAll("[data-et]").forEach((b) => b.onclick = () => { st.etab = b.dataset.et; paint(); }); const nb = $("#er-new"); if (nb) nb.onclick = start; }; paint(); return; }
+  if (E.status === "running") { const secs = Math.round((Date.now() - Date.parse(E.started)) / 1000);
+    el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="empty" style="padding:14px 8px"><span class="spin"></span><div style="margin-top:8px">Call Surgeon is reading the ${E.call_date ? F.date(E.call_date) + " " : ""}call and checking it against the report and the Street.<br><span class="tiny">Usually 2–4 minutes · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} so far</span></div></div></div>`;
+    clearTimeout(st.etimer); st.etimer = setTimeout(() => loadEarnings(d, st), 15000); return; }
+  if (E.status === "none") { el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="small muted" style="margin-top:6px">No earnings call transcript found for ${esc(d.ticker)} yet.</div></div>`; return; }
+  const auto = (d.models || []).length || d.watch;
+  el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="small muted" style="margin-top:4px">${E.status === "error" ? esc(E.error || "The last try didn't finish.") : `Latest call: ${E.quarter ? "Q" + esc(E.quarter) + " " : ""}${E.year ? esc(E.year) + " · " : ""}${E.call_date ? F.date(E.call_date) : ""}`}</div>
+    <button class="btn primary" id="er-go" style="margin-top:12px">Break down the call</button><div class="tiny muted" style="margin-top:6px">Results vs Street, what drove it, price targets, key quotes and read-throughs. About 2–4 minutes; saved after that.</div></div>`;
+  $("#er-go").onclick = start;
+  if (auto && E.status === "ready" && !st.autoStarted) { st.autoStarted = true; start(); }
+}
+async function vCompare(a, b) {
+  a = String(a).toUpperCase(); b = String(b).toUpperCase();
+  page(`${hdr(`${esc(a)} vs ${esc(b)}`, { back: "hist" })}<div id="cp">${spinner("Lining them up")}</div>`, "research");
+  let A, B; try { [A, B] = await Promise.all([getProfile(a), getProfile(b)]); } catch (e) { return fill("#cp", err(e)); }
+  let range = "1Y";
+  const val = (d, k) => { const S = d.street || {}, f = d.fin || { ttm: {} }, fu = S.fund || {};
+    switch (k) { case "mcap": return F.money(d.mcap); case "pe": return xx(d.pe); case "fpe": return xx(d.fpe); case "dy": return pctU(d.dy, 2); case "beta": return d.beta !== null && d.beta !== undefined ? d.beta.toFixed(2) : "–";
+      case "short": return pctU(d.short); case "hi": return d.range && d.range.hi ? pctS(d.range.last / d.range.hi - 1) : "–"; case "revg": return pctS(f.ttm && f.ttm.rev_g); case "opm": return pctU(f.ttm && f.ttm.opm);
+      case "fcf": return F.money(f.ttm && f.ttm.fcf); case "tgt": return S.target_avg && d.last ? pctS(S.target_avg / d.last - 1) : "–"; case "cons": return esc(S.consensus || "–");
+      case "stars": return fu.stars ? "★".repeat(Math.round(fu.stars)) : "–"; case "medal": return esc(fu.medal || "–"); case "fl": return fu.front_load ? Number(fu.front_load).toFixed(2) + "%" : fu.front_load === 0 ? "None" : "–";
+      case "b12": return fu.b12_1 ? Number(fu.b12_1).toFixed(2) + "%" : fu.b12_1 === 0 ? "None" : "–"; case "aum": return F.money(fu.aum); case "yld": return fu.yield !== null && fu.yield !== undefined ? Number(fu.yield).toFixed(2) + "%" : "–";
+      case "mgr": { const y = (fu.managers || []).map((m) => m.since).filter(Boolean); return y.length ? Math.max(0, new Date().getFullYear() - Math.min(...y)) + " yrs" : "–"; }
+      case "cat": return esc(fu.category || "–");
+      case "er": return fu.expense_ratio !== null && fu.expense_ratio !== undefined ? Number(fu.expense_ratio).toFixed(2) + "%" : "–";
+      case "er_old": return fu.expense_ratio !== null && fu.expense_ratio !== undefined ? (fu.expense_ratio > 0.05 ? fu.expense_ratio.toFixed(2) + "%" : (fu.expense_ratio * 100).toFixed(2) + "%") : "–"; }
+    return "–"; };
+  const bothF = isFundD(A) && isFundD(B), anyS = !isFundD(A) || !isFundD(B);
+  const rows = bothF ? [["Category", "cat"], ["Morningstar", "stars"], ["Medalist", "medal"], ["Expense ratio", "er"], ["Front-end load", "fl"], ["12b-1 fee", "b12"], ["Yield", "yld"], ["Assets", "aum"], ["Manager tenure", "mgr"], ["From 52-week high", "hi"]]
+    : [["Market cap", "mcap"], ["P/E trailing", "pe"], ["P/E forward", "fpe"], ["Dividend yield", "dy"], ["Beta", "beta"], ["Short interest", "short"], ["From 52-week high", "hi"],
+    ...(anyS ? [["Revenue growth", "revg"], ["Operating margin", "opm"], ["Free cash flow · 12 mo", "fcf"], ["Analyst consensus", "cons"], ["Upside to avg target", "tgt"]] : []),
+    ...(isFundD(A) || isFundD(B) ? [["Expense ratio", "er"]] : [])];
+  const RT = (d) => isFundD(d) ? fundRet(d).t : (d.returns || { t: {} }).t;
+  const draw = () => {
+    fill("#cp", `<div class="grid2" style="margin:12px 16px 0">${[A, B].map((d, i) => `<a class="card" href="#research/${esc(d.ticker)}" style="margin:0;min-width:0;text-decoration:none;color:inherit;border-top:4px solid ${i ? "var(--brass)" : "var(--navy)"}">
+        <div class="row" style="gap:8px">${logo(d.ticker, 28)}<b>${esc(d.ticker)}</b></div><div class="tiny muted" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</div>
+        <div class="n" style="font-size:22px;font-weight:700;margin-top:6px">${F.px(d.last)}</div>${d.quote ? `<div class="n small ${F.cls(d.quote.changepct)}">${F.chg(d.quote)}</div>` : `<div class="tiny muted">NAV</div>`}</a>`).join("")}</div>
+      <div style="${(A.prices || []).length < 2 ? "display:none" : ""}"><div class="card" style="padding:10px 6px 4px"><div id="cpc"></div></div>
+      <div class="seg light" style="margin:10px 16px 0">${RANGES.map(([k]) => `<button class="${range === k ? "on" : ""}" data-rg="${k}">${k}</button>`).join("")}</div></div>
+      <div id="cpl"></div>
+      <div class="card"><div style="display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:0 8px;align-items:center">
+        <span></span><b class="small" style="text-align:right">${esc(a)}</b><b class="small" style="text-align:right;color:var(--brass-t)">${esc(b)}</b>
+        ${[["1-year return", "1Y"], ["3 years / yr", "3Y"], ["5 years / yr", "5Y"], ["10 years / yr", "10Y"]].map(([l, k]) => `<span class="small" style="padding:10px 0;border-top:1px solid var(--line)">${l}</span><span class="n ${F.cls(RT(A)[k])}" style="text-align:right;font-weight:700;padding:10px 0;border-top:1px solid var(--line)">${pctS(RT(A)[k])}</span><span class="n" style="text-align:right;font-weight:600;color:var(--brass-t);padding:10px 0;border-top:1px solid var(--line)">${pctS(RT(B)[k])}</span>`).join("")}
+        ${rows.map(([l, k]) => `<span class="small" style="padding:10px 0;border-top:1px solid var(--line)">${l}</span><span class="n" style="text-align:right;font-weight:700;padding:10px 0;border-top:1px solid var(--line)">${val(A, k)}</span><span class="n" style="text-align:right;font-weight:600;color:var(--brass-t);padding:10px 0;border-top:1px solid var(--line)">${val(B, k)}</span>`).join("")}</div></div>
+      <div class="grid2" style="margin:14px 16px 0"><button class="btn primary" id="cpa">＋ ${esc(a)}</button><button class="btn ghost" id="cpb">＋ ${esc(b)}</button></div>`);
+    const y = RANGES.find((r) => r[0] === range)[1]; const pa = sliceYears(A.prices || [], y);
+    if (pa.length > 1) { const pb = align(pa, B.prices || []); const b0 = pb.find((v) => v); const a0 = pa[0][1];
+      const ptsA = pa.map(([dd, c]) => ({ y: c / a0 * 100, label: F.date(dd) })), ptsB = b0 ? pb.map((v, i) => ({ y: (v || b0) / b0 * 100, label: ptsA[i].label })) : [];
+      const leg = (i) => { const ia = i ?? ptsA.length - 1; fill("#cpl", `<div class="row between small" style="margin:8px 22px 0"><span><b style="color:var(--navy)">${esc(a)}</b> <span class="n ${F.cls(ptsA[ia].y - 100)}">${pctS(ptsA[ia].y / 100 - 1)}</span></span><span class="muted">${esc(ptsA[ia].label)}</span><span><b style="color:var(--brass-t)">${esc(b)}</b> <span class="n">${ptsB.length ? pctS(ptsB[Math.min(ia, ptsB.length - 1)].y / 100 - 1) : "–"}</span></span></div>`); };
+      lineChart($("#cpc"), [{ pts: ptsA, color: "var(--navy)" }, ...(ptsB.length ? [{ pts: ptsB, color: "var(--brass)", dash: true }] : [])], { h: 200, baseline: 100, onScrub: leg }); leg(null); }
+    $$("[data-rg]").forEach((x) => x.onclick = () => { range = x.dataset.rg; draw(); });
+    $("#cpa").onclick = () => plusSheet(A); $("#cpb").onclick = () => plusSheet(B);
+  };
+  draw();
+  if ((A.street_pending && !A.street) || (B.street_pending && !B.street)) { let n = 0; const poll = setInterval(async () => { n++; if (!$("#cp") || n > 9) return clearInterval(poll);
+    try { const [ra, rb] = await Promise.all([api(`/research/${a}/street`), api(`/research/${b}/street`)]); let ch = false;
+      if (ra.street && !A.street) { A.street = ra.street; ch = true; } if (rb.street && !B.street) { B.street = rb.street; ch = true; }
+      if (ch) { MEMR[a] = null; MEMR[b] = null; draw(); } if (A.street && B.street) clearInterval(poll); } catch (_) {} }, 20000); }
+}
 async function vSearch() {
   page(`${hdr("Research", { light: true, top: `<div class="row between" style="padding-top:var(--safe-t)"><span></span><a href="#today" style="font-weight:600;text-decoration:none">Done</a></div>` })}
     <div style="margin:12px 16px 0"><div class="field grey">${ICON.search}<input id="sq" placeholder="Ticker, or a question for Opal" autocapitalize="characters" autofocus></div></div>
@@ -951,9 +1330,9 @@ async function enablePush() {
 // ---------------------------------------------------------------- router
 const ROUTES = [
   [/^#?$|^#today$/, vToday], [/^#portfolio(?:\/(\d+))?$/, vPortfolio], [/^#calc\/(\d+)$/, vCalc], [/^#manager(?:\/(\d+))?$/, vManager], [/^#rebalance\/(\d+)$/, vRebalance], [/^#perf\/(\d+)$/, vPerf], [/^#watchlist$/, vWatchlist],
-  [/^#opal$/, vOpal], [/^#opal\/run\/(\d+)$/, vOpalRun], [/^#theses$/, vTheses], [/^#signals(?:\/([A-Z]))?$/, vSignals], [/^#signal\/([A-Z0-9.\-]+)$/, vStock], [/^#earnings$/, vEarnings], [/^#overlay$/, vOverlay], [/^#feeds$/, vFeeds],
+  [/^#opal$/, vOpal], [/^#opal\/run\/(\d+)$/, vOpalRun], [/^#theses$/, vTheses], [/^#signals(?:\/([A-Z]))?$/, vSignals], [/^#signal\/([A-Z0-9.\-]+)$/, vProfile], [/^#earnings$/, vEarnings], [/^#overlay$/, vOverlay], [/^#feeds$/, vFeeds],
   [/^#options$/, vOptions], [/^#options\/new$/, vNewIdea], [/^#options\/tracking$/, vTracking], [/^#options\/results$/, vResults],
-  [/^#grow$/, vGrow], [/^#grow\/(\d+)(?:\/([a-z_]+))?(?:\/([A-Za-z]+))?$/, vGrowIdea], [/^#stock\/([A-Za-z0-9.\-]+)$/, vStock], [/^#search$/, vSearch], [/^#settings$/, vSettings],
+  [/^#grow$/, vGrow], [/^#grow\/(\d+)(?:\/([a-z_]+))?(?:\/([A-Za-z]+))?$/, vGrowIdea], [/^#stock\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#search$/, vResearch], [/^#research$/, vResearch], [/^#research\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#compare\/([A-Za-z0-9.\-]+)\/([A-Za-z0-9.\-]+)$/, vCompare], [/^#settings$/, vSettings],
 ];
 function route() {
   if (!TOKEN) return showLogin();
@@ -962,7 +1341,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {
