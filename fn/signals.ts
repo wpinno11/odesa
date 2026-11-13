@@ -105,7 +105,7 @@ const COMMITTEES: Record<string, { name: string; sectors?: string[]; ind?: RegEx
   HSBA: { name: "Financial Services", sectors: ["Financial Services", "Real Estate"] }, SSBK: { name: "Banking", sectors: ["Financial Services", "Real Estate"] },
   SSHR: { name: "Health, Education, Labor & Pensions", sectors: ["Healthcare"] }, SSFI: { name: "Finance", sectors: ["Healthcare", "Financial Services"] },
   HSWM: { name: "Ways & Means", sectors: ["Healthcare", "Financial Services"] }, HSVR: { name: "Veterans' Affairs", sectors: ["Healthcare"] }, SSVA: { name: "Veterans' Affairs", sectors: ["Healthcare"] },
-  HSAG: { name: "Agriculture", sectors: ["Consumer Defensive"], ind: /farm|agricultur|fertilizer|food|tobacco/i }, SSAF: { name: "Agriculture", sectors: ["Consumer Defensive"], ind: /farm|agricultur|fertilizer|food|tobacco/i },
+  HSAG: { name: "Agriculture", ind: /farm|agricultur|fertilizer|food|tobacco/i }, SSAF: { name: "Agriculture", ind: /farm|agricultur|fertilizer|food|tobacco/i },
   HSJU: { name: "Judiciary", sectors: ["Communication Services"], ind: /internet|software|semiconductor/i }, SSJU: { name: "Judiciary", sectors: ["Communication Services"], ind: /internet|software|semiconductor/i },
 };
 const nameKey = (n: string) => { const w = String(n).toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, "").replace(/[^a-z\s-]/g, " ").split(/\s+/).filter((x) => x.length > 1);
