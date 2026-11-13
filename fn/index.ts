@@ -11,6 +11,7 @@ import * as G from "./grow.ts";
 import * as P from "./perf.ts";
 import * as CALLS from "./calls.ts";
 import * as INBOX from "./inbox.ts";
+import * as AL from "./alerts.ts";
 import { vapid, subscribe, unsubscribe, notify } from "./push.ts";
 
 const ORIGINS = [/^https:\/\/wpinno11\.github\.io$/, /^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
@@ -269,6 +270,7 @@ async function route(c: Ctx): Promise<unknown> {
   }
 
   // ---------------- alerts, settings, push
+  if (a === "alerts") return await AL.list(Math.min(60, Number(c.q.get("days") ?? 14) || 14));
   if (a === "events") { if (m === "POST") await sql`update odesa.events set read = true where not read`; return await sql`select * from odesa.events order by ts desc limit 60`; }
   // ---------------- track record, comparisons, stats
   if (a === "perf" && b) {
@@ -280,7 +282,7 @@ async function route(c: Ctx): Promise<unknown> {
   }
   if (a === "settings") {
     const s = await kvGet<any>("settings", {});
-    if (m === "POST") { const allow = ["target_pct", "stop_pct", "sell_target_pct", "sell_stop_pct", "contracts", "auto_close", "grok_cap_usd", "firm", "pulse", "push", "cash_yield_pct"];
+    if (m === "POST") { const allow = ["target_pct", "stop_pct", "sell_target_pct", "sell_stop_pct", "contracts", "auto_close", "grok_cap_usd", "firm", "pulse", "push", "cash_yield_pct", "alert_min", "alert_cap"];
       for (const k of allow) if (c.body[k] !== undefined) s[k] = c.body[k]; await kvSet("settings", s); }
     return s;
   }
@@ -294,7 +296,7 @@ async function route(c: Ctx): Promise<unknown> {
 }
 
 // ---------------------------------------------------------------- the scheduler's tick (every 5 minutes)
-const DAILY = ["congress", "quiver", "earnings", "putsales", "transcripts"] as const;
+const DAILY = ["congress", "quiver", "earnings", "putsales", "warnings", "scorecard", "transcripts"] as const;
 async function runJob(job: string) {
   switch (job) {
     case "flow": return await S.ingestFlow();
@@ -304,6 +306,8 @@ async function runJob(job: string) {
     case "transcripts": return await S.transcripts();
     case "earnings": return await S.earningsIV();
     case "putsales": return await S.putSales();
+    case "warnings": return await S.warnings();
+    case "scorecard": return await AL.scorecardFill();
     case "mark": return await O.markAll();
     case "settle": return await O.settleExpired();
     case "perf": return await P.lockAll();
@@ -328,7 +332,8 @@ async function tickInner() {
   const dd = await kvGet<any>("daily_done", { date: "", done: [] });
   if (dd.date !== n.date) { dd.date = n.date; dd.done = []; }
   if (n.mins >= 420 && !out.x && Date.now() - t0 < 30000) {
-    const nextJob = DAILY.find((j) => !dd.done.includes(j) && (tradingDay() || j === "congress" || j === "quiver"));
+    const nextJob = DAILY.find((j) => !dd.done.includes(j) && (tradingDay() || j === "congress" || j === "quiver" || j === "scorecard")
+      && !((j === "putsales" || j === "warnings") && n.mins < 585)); // these can alert, so they wait for the market to be open
     if (nextJob) {
       await step(nextJob, () => runJob(nextJob));
       const r: any = out[nextJob];

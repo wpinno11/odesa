@@ -1,7 +1,6 @@
 // Inbox for Grok Bot: it sends earnings breakdowns, flags and its own rules here; Odesa files each in the right place.
 // Auth: header x-odesa-inbox with the inbox key (only its hash is stored, in odesa.kv 'inbox_key').
 import { sql, kvGet, kvSet, event } from "./db.ts";
-import { notify } from "./push.ts";
 
 const T = (v: any) => String(v ?? "").toUpperCase().replace(/^\$/, "").trim();
 const okT = (t: string) => /^[A-Z0-9.\-]{1,12}$/.test(t);
@@ -27,11 +26,10 @@ export async function receive(body: any) {
     for (const c of r.call ?? []) c.verified = c.verified ?? !!c.quote;   // Grok Bot checks its own quotes against the transcript
     await kvSet(`call:${t}`, { status: "done", at: new Date().toISOString(), call_date: date || null, source: "Grok Bot", result: r });
     await event("call", `${t}: earnings breakdown from Grok Bot`, str(r.headline, 200));
-    if (body.alert !== false) await notify(`${t} earnings read`, str(r.headline ?? "New breakdown from Grok Bot", 160), `#research/${t}`).catch(() => {});
     return { ok: true, filed: `Research › ${t} › Earnings` };
   }
   if (kind === "signal" || kind === "flag") {
-    const items = Array.isArray(body.items) ? body.items : [body]; let n = 0;
+    const items = Array.isArray(body.items) ? body.items : [body]; let n = 0; const severe = new Set<string>();
     for (const x of items.slice(0, 50)) {
       const t = T(x.ticker); if (!okT(t)) continue;
       const title = str(x.title ?? x.phrase ?? x.note, 160); if (!title) continue;
@@ -39,8 +37,10 @@ export async function receive(body: any) {
       const r = await sql`insert into odesa.signals(src, ticker, ts, title, detail, strength, dedupe)
         values ('T', ${t}, ${ts}, ${title}, ${sql.json({ ...x, from: "Grok Bot" } as never)}, ${strength}, ${"GB:" + t + ":" + str(x.id ?? title, 120)})
         on conflict (dedupe) do nothing returning id`;
-      if (r.length) { n++; if (x.alert) await notify(`${t}: ${title}`.slice(0, 80), str(x.why ?? x.quote ?? "", 160), `#research/${t}`).catch(() => {}); }
+      if (r.length) { n++; if (Number(x.severity ?? 0) >= 4 || x.alert) severe.add(t); }
     }
+    // a severe flag only reaches the phone if it stacks with other warning signs on that name
+    if (severe.size) { const S = await import("./signals.ts"); for (const t of [...severe].slice(0, 10)) await S.warnings(t).catch(() => null); }
     return { ok: true, added: n, filed: "Signals (T)" };
   }
   if (kind === "rules") {

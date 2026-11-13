@@ -9,12 +9,13 @@ const safe = async <T>(p: Promise<T>, d: T): Promise<T> => { try { return await 
 export async function today() {
   const s = await kvGet<any>("settings", {});
   const pulse: string[] = s.pulse ?? ["SPY", "QQQ", "DIA", "IWM", "TLT", "GLD"];
-  const [quotes, ov, events, ideas, open, eiv, models] = await Promise.all([
+  const [quotes, ov, events, ideas, open, eiv, models, alerts] = await Promise.all([
     safe(MD.quotes(pulse), {} as Record<string, any>), safe(overlap(5, 8), []),
     sql`select * from odesa.events order by ts desc limit 15`, sql`select count(*)::int n from odesa.ideas where status = 'new'`,
     sql`select count(*)::int n from odesa.positions where status = 'open'`, kvGet<any>("earnings_iv", { rows: [] }), sql`select id, name, holdings from odesa.models order by sort, id`,
+    sql`select id, at, lane, ticker, score, title, why, url, buzzed from odesa.alerts where at > now() - interval '3 days' and (buzzed or score >= 70) order by buzzed desc, at desc limit 8`,
   ]);
-  return { market_open: marketOpen(), pulse: pulse.map((t) => ({ t, ...(quotes[t] ?? {}) })), overlaps: ov.filter((o: any) => o.count >= 2).slice(0, 5),
+  return { alerts, market_open: marketOpen(), pulse: pulse.map((t) => ({ t, ...(quotes[t] ?? {}) })), overlaps: ov.filter((o: any) => o.count >= 2).slice(0, 5),
     events, new_ideas: ideas[0].n, open_trades: open[0].n, earnings: (eiv.rows ?? []).filter((r: any) => r.tag !== "fair").slice(0, 4),
     models: models.map((m: any) => ({ id: m.id, name: m.name, holdings: (m.holdings ?? []).length })) };
 }

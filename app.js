@@ -140,9 +140,9 @@ async function vToday() {
       ${d.earnings.length ? `<a href="#calendar" class="card amber" style="display:block;text-decoration:none;color:inherit"><div class="eyebrow" style="color:var(--amber)">Earnings options</div>
         ${d.earnings.map((e) => `<div class="row between" style="margin-top:8px"><span style="font-weight:700">${esc(e.ticker)} <span class="muted small" style="font-weight:400">${F.date(e.date)}</span></span><span class="pill" style="background:${e.tag === "cheap" ? "#FDEBD3" : "#FDE7E4"};color:${e.tag === "cheap" ? "var(--amber)" : "var(--down)"}">${e.tag} · ${Math.round(e.ratio * 100)}%</span></div>`).join("")}</a>` : ""}
       </div><div>
-      <div class="sec"><h2 class="h2">Alerts</h2><span class="small muted">${d.market_open ? "Market open" : "Market closed"}</span></div>
-      <div class="card pad0">${d.events.length ? d.events.map((e) => `<div class="li"><div class="grow1"><div style="font-size:15px;font-weight:600">${esc(e.title)}</div>${e.body ? `<div class="small muted">${esc(e.body)}</div>` : ""}</div><span class="tiny muted">${F.ago(e.ts)}</span></div>`).join("")
-        : `<div class="empty">Ideas, overlaps and trade alerts will show here.</div>`}</div>
+      <div class="sec"><h2 class="h2">Alerts</h2><a href="#alerts" class="small" style="font-weight:600;text-decoration:none">All</a></div>
+      <div class="card pad0">${(d.alerts || []).length ? d.alerts.map(alertRow).join("")
+        : `<div class="empty">Only the strongest setups show here: very unusual options, congress trades that match a committee, signals agreeing, warning signs stacking and overlay trade ideas.</div>`}</div>
       <div class="sec"><h2 class="h2">Models</h2><a href="#portfolio" class="small" style="font-weight:600;text-decoration:none">Portfolio</a></div>
       <div class="card pad0">${d.models.map((m) => `<a class="li" href="#portfolio/${m.id}"><div class="grow1" style="font-weight:600">${esc(m.name)}</div><span class="small muted">${m.holdings ? m.holdings + " holdings" : "add holdings"}</span><span class="muted">›</span></a>`).join("")}</div>
       </div></div>`);
@@ -1386,11 +1386,43 @@ async function vSearch() {
 }
 
 // ---------------------------------------------------------------- Settings
+// ---------------------------------------------------------------- Alerts
+const LANE_ICON = { flow: "Options", congress: "Congress", converge: "Agree", warning: "Warning", overlay: "Overlay" };
+function alertRow(a) {
+  const tone = a.lane === "warning" ? "var(--down)" : a.score >= 90 ? "var(--up)" : "var(--ink)";
+  return `<a class="li" href="${esc(a.url || "#research/" + a.ticker)}" style="align-items:flex-start;text-decoration:none;color:inherit">
+    <div class="grow1"><div class="row" style="gap:6px"><span class="pill" style="background:#EEF1F4;color:var(--gray)">${esc(LANE_ICON[a.lane] || a.lane)}</span>${a.buzzed ? "" : `<span class="tiny muted">quiet</span>`}</div>
+      <div style="font-size:15px;font-weight:600;margin-top:4px">${esc(a.title)}</div><div class="small muted" style="margin-top:2px;line-height:1.35">${esc(a.why)}</div></div>
+    <div style="text-align:right;flex:none"><div class="n" style="font-size:20px;font-weight:700;color:${tone}">${a.score}</div><div class="tiny muted">${F.ago(a.at)}</div></div></a>`;
+}
+async function vAlerts(mode) {
+  const all = mode === "all";
+  page(`${hdr("Alerts", { back: "#today", sub: "Scored 0–100. Only the strongest reach your phone." })}<div class="seg light" style="margin:12px 16px 4px;max-width:360px">
+    <button class="${all ? "" : "on"}" onclick="location.hash='#alerts'">Sent to phone</button><button class="${all ? "on" : ""}" onclick="location.hash='#alerts/all'">Everything scored</button></div><div id="al">${spinner()}</div>`, "today");
+  try {
+    const d = await api("/alerts?days=21");
+    const rows = d.rows.filter((r) => all ? r.score >= 60 : r.buzzed);
+    const pct = (x) => x === null || x === undefined ? "–" : (x * 100).toFixed(0) + "%";
+    const sc = Object.keys(d.names).map((l) => { const c = d.scorecard.find((x) => x.lane === l) || { n: 0 };
+      return `<div class="li" style="cursor:default"><div class="grow1"><div style="font-weight:600">${esc(d.names[l])}</div><div class="tiny muted">${c.n} sent · needs ${d.bars[l]}+${d.bars[l] > d.min ? " (raised: hasn't paid off)" : ""}</div></div>
+        <div style="text-align:right"><div class="small">5 days: <b>${c.n5 ? pct(c.hit5) + " right" : "–"}</b>${c.n5 ? ` <span class="${c.avg5 >= 0 ? "up" : "down"}">${(c.avg5 * 100).toFixed(1)}%</span>` : ""}</div>
+        <div class="small">20 days: <b>${c.n20 ? pct(c.hit20) + " right" : "–"}</b>${c.n20 ? ` <span class="${c.avg20 >= 0 ? "up" : "down"}">${(c.avg20 * 100).toFixed(1)}%</span>` : ""}</div></div></div>`; }).join("");
+    fill("#al", `<div class="card pad0">${rows.length ? rows.map(alertRow).join("") : `<div class="empty">${all ? "Nothing scored in the last three weeks yet." : "Nothing has cleared the bar yet. That's on purpose: only rare, strong setups buzz your phone."}</div>`}</div>
+      <div class="sec"><h2 class="h2">How alerts have done</h2></div>
+      <div class="card pad0">${sc}<div class="tiny muted" style="padding:10px 0 12px;line-height:1.4">"Right" means the stock moved the way the alert pointed (down for warnings). Checked 5 and 20 trading days later. A type that's right less than 45% of the time after 10+ alerts needs 5 more points to buzz.</div></div>
+      <div class="card"><h2 class="h2">Alert settings</h2><div class="grid2" style="margin-top:10px">
+        <label class="small">Minimum score<input class="inp n" id="amin" value="${d.min}"></label><label class="small">Most per day<input class="inp n" id="acap" value="${d.cap}"></label></div>
+        <p class="tiny muted" style="margin-top:8px;line-height:1.4">One alert per name per day. Outside market hours only congress trades and severe Call Surgeon warnings come through. Your own tracked trades hitting a target or stop always alert.</p>
+        <button class="btn primary" id="asave" style="margin-top:10px">Save</button></div>`);
+    $("#asave").onclick = async () => { try { await api("/settings", { body: { alert_min: Math.max(50, Math.min(100, Number($("#amin").value) || 80)), alert_cap: Math.max(1, Math.min(20, Number($("#acap").value) || 5)) } }); toast("Saved"); vAlerts(mode); } catch (e) { toast(e.message); } };
+  } catch (e) { fill("#al", err(e)); }
+}
+
 async function vSettings() {
   page(`${hdr("Settings", { back: "#today" })}<div id="se">${spinner()}</div>`, "today");
   const s = await api("/settings");
   const pushOk = "serviceWorker" in navigator && "PushManager" in window;
-  fill("#se", `<div class="card"><h2 class="h2">Notifications</h2><p class="small muted">${pushOk ? "Get a tap on your phone for new ideas, overlaps and trade alerts." : "On iPhone: add Odesa to your Home Screen first (Share → Add to Home Screen), then open it from there."}</p>
+  fill("#se", `<div class="card"><h2 class="h2">Notifications</h2><p class="small muted">${pushOk ? "Your phone only buzzes for the strongest setups (score 80+, at most 5 a day). Change that under Today › Alerts." : "On iPhone: add Odesa to your Home Screen first (Share → Add to Home Screen), then open it from there."}</p>
       ${pushOk ? `<button class="btn primary" id="pon">Turn on notifications</button><button class="btn soft small" id="ptest" style="margin-top:8px;width:100%">Send a test</button>` : ""}</div>
     <div class="card"><h2 class="h2">Options defaults</h2><div class="grid2" style="margin-top:10px">
       <label class="small">Buy target %<input class="inp n" data-k="target_pct" value="${s.target_pct ?? ""}"></label><label class="small">Buy stop %<input class="inp n" data-k="stop_pct" value="${s.stop_pct ?? ""}"></label>
@@ -1419,7 +1451,7 @@ async function enablePush() {
 // ---------------------------------------------------------------- router
 const ROUTES = [
   [/^#?$|^#today$/, vToday], [/^#portfolio(?:\/(\d+))?$/, vPortfolio], [/^#calc\/(\d+)$/, vCalc], [/^#manager(?:\/(\d+))?$/, vManager], [/^#rebalance\/(\d+)$/, vRebalance], [/^#perf\/(\d+)$/, vPerf], [/^#watchlist$/, vWatchlist],
-  [/^#opal$/, vOpal], [/^#opal\/run\/(\d+)$/, vOpalRun], [/^#theses$/, vTheses], [/^#signals(?:\/([A-Z]))?$/, vSignals], [/^#signal\/([A-Z0-9.\-]+)$/, vProfile], [/^#earnings$/, vEarnings], [/^#overlay$/, vOverlay], [/^#feeds$/, vFeeds],
+  [/^#opal$/, vOpal], [/^#opal\/run\/(\d+)$/, vOpalRun], [/^#theses$/, vTheses], [/^#signals(?:\/([A-Z]))?$/, vSignals], [/^#signal\/([A-Z0-9.\-]+)$/, vProfile], [/^#earnings$/, vEarnings], [/^#overlay$/, vOverlay], [/^#alerts(?:\/(all))?$/, vAlerts], [/^#feeds$/, vFeeds],
   [/^#options$/, vOptions], [/^#options\/new$/, vNewIdea], [/^#options\/tracking$/, vTracking], [/^#options\/results$/, vResults],
   [/^#grow$/, vGrow], [/^#grow\/(\d+)(?:\/([a-z_]+))?(?:\/([A-Za-z]+))?$/, vGrowIdea], [/^#stock\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#search$/, vResearch], [/^#research$/, vResearch], [/^#calendar(?:\/(\d{4}-\d{2}-\d{2}))?$/, vCalendar], [/^#research\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#compare\/([A-Za-z0-9.\-]+)\/([A-Za-z0-9.\-]+)$/, vCompare], [/^#settings$/, vSettings],
 ];
@@ -1430,7 +1462,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {

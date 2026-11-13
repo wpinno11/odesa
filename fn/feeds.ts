@@ -80,7 +80,7 @@ export function normFlow(a: any) {
     side: ask > bid * 1.5 ? "bought" : bid > ask * 1.5 ? "sold" : "mixed",
     underlying: num(f(a, "underlying_price")), iv: num(f(a, "iv")), delta: num(f(a, "delta")), rule: f(a, "alert_rule"),
     sweep: !!a?.has_sweep, opening: !!a?.all_opening_trades, chain: f(a, "option_chain"), marketcap: num(f(a, "marketcap")),
-    next_earnings: f(a, "next_earnings_date"), issue_type: f(a, "issue_type"), trades: num(f(a, "trade_count")),
+    next_earnings: f(a, "next_earnings_date"), issue_type: f(a, "issue_type"), trades: num(f(a, "trade_count")), multileg: !!a?.has_multileg,
   };
 }
 export const UW = {
