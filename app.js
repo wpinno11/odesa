@@ -137,7 +137,7 @@ async function vToday() {
       <div class="grid2" style="margin:12px 16px 0">
         <a href="#options" class="card" style="margin:0;text-decoration:none;color:inherit"><div class="eyebrow">New ideas</div><div class="big n" style="margin-top:6px">${d.new_ideas}</div></a>
         <a href="#options/tracking" class="card" style="margin:0;text-decoration:none;color:inherit"><div class="eyebrow">Tracking</div><div class="big n" style="margin-top:6px">${d.open_trades}</div></a></div>
-      ${d.earnings.length ? `<a href="#earnings" class="card amber" style="display:block;text-decoration:none;color:inherit"><div class="eyebrow" style="color:var(--amber)">Earnings options</div>
+      ${d.earnings.length ? `<a href="#calendar" class="card amber" style="display:block;text-decoration:none;color:inherit"><div class="eyebrow" style="color:var(--amber)">Earnings options</div>
         ${d.earnings.map((e) => `<div class="row between" style="margin-top:8px"><span style="font-weight:700">${esc(e.ticker)} <span class="muted small" style="font-weight:400">${F.date(e.date)}</span></span><span class="pill" style="background:${e.tag === "cheap" ? "#FDEBD3" : "#FDE7E4"};color:${e.tag === "cheap" ? "var(--amber)" : "var(--down)"}">${e.tag} · ${Math.round(e.ratio * 100)}%</span></div>`).join("")}</a>` : ""}
       </div><div>
       <div class="sec"><h2 class="h2">Alerts</h2><span class="small muted">${d.market_open ? "Market open" : "Market closed"}</span></div>
@@ -688,7 +688,7 @@ async function vSignals(filter) {
         <div style="display:grid;grid-template-columns:64px repeat(8,1fr) 34px;gap:9px 0;margin-top:12px;align-items:center;justify-items:center">
           <span></span>${ORDER.map((k) => `<span style="font-size:11px;font-weight:700;color:var(--${k})">${k}</span>`).join("")}<span class="tiny muted">#</span>
           ${ov.slice(0, 14).map((o) => `<a href="#stock/${esc(o.ticker)}" style="justify-self:start;font-weight:700;text-decoration:none;color:inherit">${esc(o.ticker)}</a>${ORDER.map((k) => dot(k, 19, o.srcs.includes(k))).join("")}<span class="n" style="font-weight:700">${o.count}</span>`).join("")}</div></div>` : ""}
-      <div class="grid2" style="margin:12px 16px 0"><a href="#earnings" class="card amber" style="margin:0;text-decoration:none;color:inherit"><div class="eyebrow" style="color:var(--amber)">Earnings IV</div><div style="font-weight:600;margin-top:4px">Cheap or rich into earnings</div></a>
+      <div class="grid2" style="margin:12px 16px 0"><a href="#calendar" class="card amber" style="margin:0;text-decoration:none;color:inherit"><div class="eyebrow" style="color:var(--amber)">Earnings IV</div><div style="font-weight:600;margin-top:4px">Cheap or rich into earnings</div></a>
         <a href="#overlay" class="card" style="margin:0;text-decoration:none;color:inherit"><div class="eyebrow">Overlay bot</div><div style="font-weight:600;margin-top:4px">Put sales & sneaky calls</div></a></div>
       </div><div>
       <div class="sec"><h2 class="h2">Live feed</h2></div>
@@ -956,7 +956,12 @@ const sizeName = (mc) => !mc ? "" : mc >= 200e9 ? "Mega cap" : mc >= 10e9 ? "Lar
 async function vResearch() {
   page(`${hdr("Research", { light: true, top: `<div style="height:calc(10px + var(--safe-t))"></div>` })}
     <div style="margin:4px 16px 0"><div class="field grey">${ICON.search}<input id="rq" placeholder="Ticker or company name" autocapitalize="characters" autocomplete="off" autofocus></div></div>
-    <div id="rr"></div><div id="rhome"></div>`, "research");
+    <div id="rr"></div>
+    <a class="card" href="#calendar" style="display:flex;gap:12px;align-items:center;text-decoration:none;color:inherit"><span style="font-size:26px">📅</span>
+      <div class="grow1"><div style="font-weight:700">Earnings calendar</div><div class="small muted" id="rcal">Who reports each day, your names first</div></div><span class="muted">›</span></a>
+    <div id="rhome"></div>`, "research");
+  api("/calendar").then((c) => { const d = c.by_day[c.days.includes(c.today) ? c.today : c.days[0]]; const fl = d ? d.pre.concat(d.post).filter((x) => x.flagged) : [];
+    fill("#rcal", fl.length ? `${c.days.includes(c.today) ? "Today" : "Monday"}: ${fl.slice(0, 4).map((x) => esc(x.t)).join(", ")}${fl.length > 4 ? " +" + (fl.length - 4) : ""} of yours or flagged` : `${d ? d.pre.length + d.post.length : 0} companies reporting ${c.days.includes(c.today) ? "today" : "Monday"}`); }).catch(() => {});
   const home = async () => {
     const rec = recentGet(); let ms = []; try { ms = await getModels(); } catch (_) {}
     const held = [...new Set(ms.flatMap((m) => (m.holdings || []).filter((h) => !h.cash).map((h) => h.t)))];
@@ -1266,6 +1271,55 @@ async function loadEarnings(d, st) {
   $("#er-go").onclick = start;
   if (auto && E.status === "ready" && !st.autoStarted) { st.autoStarted = true; start(); }
 }
+// ---------------------------------------------------------------- Earnings calendar (Research)
+async function vCalendar(date) {
+  page(`${hdr("Earnings calendar", { back: "#research", sub: "Who reports each day. Your names, Opal's names and anything lit up in Signals come first." })}<div id="cal">${spinner("Loading the week")}</div>`, "research");
+  const st = { f: "flag" }; let D;
+  const load = async (d) => { fill("#cal", spinner("Loading the week")); try { D = await api("/calendar" + (d ? "?date=" + d : "")); } catch (e) { return fill("#cal", err(e)); }
+    st.day = D.days.includes(st.day) ? st.day : (D.days.includes(D.today) ? D.today : D.days[0]); draw(); };
+  const shift = (n) => { const x = new Date(D.days[0] + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n * 7); load(x.toISOString().slice(0, 10)); };
+  const row = (x) => { const tg = x.tags || {}; const done = x.act !== null && x.act !== undefined; const beat = done && x.est !== null ? x.act - x.est : null;
+    return `<a class="li" href="#research/${esc(x.t)}" style="align-items:flex-start">${logo(x.t, 34)}<div class="grow1" style="min-width:0">
+      <div class="row" style="gap:6px;flex-wrap:wrap"><b>${esc(x.t)}</b>${x.sp ? `<span class="tiny muted">S&P</span>` : ""}
+        ${(tg.models || []).map((m) => `<span class="pill" style="background:#F5EEE2;color:var(--brass-t)">${esc(m.name)} ${F.bps(m.w)}</span>`).join("")}
+        ${tg.watch ? `<span class="pill" style="background:var(--soft)">Watchlist</span>` : ""}
+        ${tg.opal ? `<span class="pill" style="background:#EEF0F7;color:var(--navy)" title="${esc(tg.opal.map((o) => o.title).join(" · "))}">Opal</span>` : ""}
+        ${tg.signals ? `<span class="row" style="gap:2px">${tg.signals.srcs.map((s) => dot(s, 15)).join("")}</span>` : ""}</div>
+      <div class="tiny muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:capitalize">${esc(String(x.n || "").toLowerCase())}${x.mcap ? " · " + F.money(x.mcap) : ""}</div>
+      ${tg.opal ? `<div class="tiny" style="color:var(--navy);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Opal: ${esc(tg.opal[0].title)}</div>` : ""}</div>
+      <div style="text-align:right;flex:none">${done ? `<div class="n small" style="font-weight:700;color:${beat === null ? "var(--ink)" : beat >= 0 ? "var(--up)" : "var(--down)"}">${beat === null ? "" : beat >= 0 ? "Beat " : "Miss "}$${x.act.toFixed(2)}</div>
+          <div class="n tiny muted">est $${x.est !== null ? x.est.toFixed(2) : "–"}${x.react !== null ? ` · <span class="${F.cls(x.react)}">${F.pct(x.react * 100, 1)}</span>` : ""}</div>`
+        : `<div class="n small" style="font-weight:700">${x.move ? "±" + (x.move * 100).toFixed(1) + "%" : "–"}</div><div class="tiny muted">${x.move ? "priced in" : ""}${x.est !== null ? (x.move ? " · " : "") + "est $" + x.est.toFixed(2) : ""}</div>`}</div></a>`; };
+  const draw = () => {
+    const B = D.by_day[st.day] || { pre: [], post: [] };
+    const filt = (xs) => st.f === "flag" ? xs.filter((x) => x.flagged) : st.f === "sp" ? xs.filter((x) => x.sp || x.flagged) : xs;
+    const pre = filt(B.pre), post = filt(B.post);
+    const ev = (D.econ || []).filter((e) => String(e.date).slice(0, 10) === st.day);
+    const cnt = (d) => { const b = D.by_day[d]; return b ? b.pre.length + b.post.length : 0; }, fl = (d) => { const b = D.by_day[d]; return b ? b.pre.concat(b.post).filter((x) => x.flagged).length : 0; };
+    const sec = (title, sub, xs, all) => `<div class="sec"><h2 class="h2">${title}</h2><span class="small muted">${sub}</span></div>
+      <div class="card pad0">${xs.length ? xs.map(row).join("") : `<div class="empty">${all ? "Nobody reporting." : "None of your names or flagged names. Tap “All” to see everyone."}</div>`}</div>`;
+    fill("#cal", `
+      <div class="row between" style="margin:4px 16px 0"><button class="chip" id="cp">‹ Prev</button><span class="small" style="font-weight:600">${F.date(D.days[0])} – ${F.date(D.days[4])}</span><button class="chip" id="cn">Next ›</button></div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:10px 16px 0">${D.days.map((d) => { const on = d === st.day, f = fl(d);
+        return `<button data-d="${d}" style="border:0;border-radius:14px;padding:8px 2px;cursor:pointer;background:${on ? "var(--navy)" : "#fff"};color:${on ? "#fff" : "var(--ink)"}">
+          <div class="tiny" style="font-weight:700;opacity:.75">${new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}${d === D.today ? " ·" : ""}</div>
+          <div style="font-size:19px;font-weight:700">${Number(d.slice(8))}</div>
+          <div class="tiny" style="opacity:.8">${cnt(d)}</div>${f ? `<div style="margin:3px auto 0;width:18px;height:18px;border-radius:9px;background:var(--brass);color:#fff;font-size:11px;font-weight:700;line-height:18px">${f}</div>` : `<div style="height:21px"></div>`}</button>`; }).join("")}</div>
+      <div class="seg light" style="margin:12px 16px 0">${[["flag", "Mine & flagged"], ["sp", "S&P 500"], ["all", "All"]].map(([k, l]) => `<button data-f="${k}" class="${st.f === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      ${ev.length || D.econ_pending ? `<div class="sec"><h2 class="h2">Economy & Fed</h2><span class="small muted">ET</span></div><div class="card pad0">${ev.length ? ev.map((e) => `<div class="li" style="cursor:default">
+          <span class="pill" style="background:${e.importance === "high" ? "#FBE9E6" : "var(--soft)"};color:${e.importance === "high" ? "var(--down)" : "var(--gray)"};min-width:64px;justify-content:center">${esc(e.time || "")}</span>
+          <div class="grow1"><div style="font-weight:600">${esc(e.name)}</div><div class="tiny muted">${[e.consensus ? "est " + esc(e.consensus) : "", e.prior ? "prior " + esc(e.prior) : ""].filter(Boolean).join(" · ")}</div></div>
+          ${e.actual !== null && e.actual !== undefined && e.actual !== "" ? `<b class="n">${esc(e.actual)}</b>` : ""}</div>`).join("") : `<div class="empty"><span class="spin"></span><div style="margin-top:6px">Gathering this week's releases…</div></div>`}</div>` : ""}
+      ${sec("Before the open", `${B.pre.length} reporting`, pre, st.f === "all")}
+      ${sec("After the close", `${B.post.length} reporting`, post, st.f === "all")}
+      <p class="tiny muted" style="margin:12px 20px 0;line-height:1.45">Tags: your models and watchlist · <b>Opal</b> = named in a recent Opal run · dots = lit up in Signals this week. “Priced in” is the move options imply. Earnings and economic calendars: Unusual Whales.</p>`);
+    $$("[data-d]").forEach((b) => b.onclick = () => { st.day = b.dataset.d; draw(); });
+    $$("[data-f]").forEach((b) => b.onclick = () => { st.f = b.dataset.f; draw(); });
+    $("#cp").onclick = () => shift(-1); $("#cn").onclick = () => shift(1);
+    if (D.econ_pending && !st.repoll) { st.repoll = true; setTimeout(() => { if ($("#cal")) load(st.day); }, 60000); }
+  };
+  load(date);
+}
 async function vCompare(a, b) {
   a = String(a).toUpperCase(); b = String(b).toUpperCase();
   page(`${hdr(`${esc(a)} vs ${esc(b)}`, { back: "hist" })}<div id="cp">${spinner("Lining them up")}</div>`, "research");
@@ -1360,7 +1414,7 @@ const ROUTES = [
   [/^#?$|^#today$/, vToday], [/^#portfolio(?:\/(\d+))?$/, vPortfolio], [/^#calc\/(\d+)$/, vCalc], [/^#manager(?:\/(\d+))?$/, vManager], [/^#rebalance\/(\d+)$/, vRebalance], [/^#perf\/(\d+)$/, vPerf], [/^#watchlist$/, vWatchlist],
   [/^#opal$/, vOpal], [/^#opal\/run\/(\d+)$/, vOpalRun], [/^#theses$/, vTheses], [/^#signals(?:\/([A-Z]))?$/, vSignals], [/^#signal\/([A-Z0-9.\-]+)$/, vProfile], [/^#earnings$/, vEarnings], [/^#overlay$/, vOverlay], [/^#feeds$/, vFeeds],
   [/^#options$/, vOptions], [/^#options\/new$/, vNewIdea], [/^#options\/tracking$/, vTracking], [/^#options\/results$/, vResults],
-  [/^#grow$/, vGrow], [/^#grow\/(\d+)(?:\/([a-z_]+))?(?:\/([A-Za-z]+))?$/, vGrowIdea], [/^#stock\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#search$/, vResearch], [/^#research$/, vResearch], [/^#research\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#compare\/([A-Za-z0-9.\-]+)\/([A-Za-z0-9.\-]+)$/, vCompare], [/^#settings$/, vSettings],
+  [/^#grow$/, vGrow], [/^#grow\/(\d+)(?:\/([a-z_]+))?(?:\/([A-Za-z]+))?$/, vGrowIdea], [/^#stock\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#search$/, vResearch], [/^#research$/, vResearch], [/^#calendar(?:\/(\d{4}-\d{2}-\d{2}))?$/, vCalendar], [/^#research\/([A-Za-z0-9.\-]+)$/, vProfile], [/^#compare\/([A-Za-z0-9.\-]+)\/([A-Za-z0-9.\-]+)$/, vCompare], [/^#settings$/, vSettings],
 ];
 function route() {
   if (!TOKEN) return showLogin();
@@ -1369,7 +1423,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {

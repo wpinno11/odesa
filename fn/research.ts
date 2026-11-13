@@ -179,3 +179,69 @@ export async function search(q: string) {
   if (/^[A-Za-z]{2,6}$/.test(q) && !out.length) out.unshift({ t: up, n: /^[A-Z]{4}X$/.test(up) ? "Mutual fund" : "Open this symbol" });
   return out.slice(0, 10);
 }
+
+// ---------------------------------------------------------------- Earnings calendar (by day) + economic releases
+const _erc = new Map<string, { at: number; v: any[] }>();
+async function erDay(date: string, when: "premarket" | "afterhours") {
+  const key = date + when, c = _erc.get(key), past = date < new Date().toISOString().slice(0, 10);
+  if (c && Date.now() - c.at < (past ? 6 * 3600000 : 20 * 60000)) return c.v;
+  const r = await safe(UW.raw(`/api/earnings/${when}`, { date, limit: 200 }), [] as any);
+  const v = (Array.isArray(r) ? r : []).map((x: any) => ({
+    t: String(x.symbol ?? "").toUpperCase(), n: x.full_name ?? "", mcap: nn(x.marketcap), sector: x.sector ?? null, sp: !!x.is_s_p_500, opts: !!x.has_options,
+    est: nn(x.street_mean_est), act: nn(x.actual_eps), move: nn(x.expected_move_perc), react: nn(x.reaction), q: x.ending_fiscal_quarter ?? null,
+  })).filter((x: any) => x.t);
+  _erc.set(key, { at: Date.now(), v }); return v;
+}
+function weekOf(d: string) {
+  const x = new Date(d + "T12:00:00Z"); const wd = x.getUTCDay();
+  if (wd === 6) x.setUTCDate(x.getUTCDate() + 2); else if (wd === 0) x.setUTCDate(x.getUTCDate() + 1); else x.setUTCDate(x.getUTCDate() - (wd - 1));
+  return Array.from({ length: 5 }, (_, i) => { const y = new Date(x); y.setUTCDate(x.getUTCDate() + i); return y.toISOString().slice(0, 10); });
+}
+/** Fed and economic releases for a week, gathered from public calendars by Grok (refreshed every 12 hours; actuals fill in as they're released). */
+const BIG = /fomc|fed |federal reserve|interest rate|cpi|consumer price|pce|nonfarm|payroll|unemployment rate|gdp|retail sales|ppi|producer price|ism|jobless claims|powell/i;
+async function econWeek(days: string[], wait = false) {
+  // Unusual Whales' economic calendar first (already paid for); Grok only if it has nothing for the week
+  const uw = await safe(UW.raw("/api/market/economic-calendar"), [] as any);
+  const et = (iso: string) => { const d = new Date(iso); return { date: d.toLocaleDateString("en-CA", { timeZone: "America/New_York" }), time: d.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) }; };
+  const ev = (Array.isArray(uw) ? uw : []).filter((e: any) => e?.time && e?.event).map((e: any) => { const w = et(e.time); const name = String(e.event);
+    return { date: w.date, time: w.time, name: e.reported_period ? `${name} (${e.reported_period})` : name, kind: String(e.type ?? ""), importance: BIG.test(name) || /fomc|fed/i.test(String(e.type)) ? "high" : "medium",
+      consensus: e.forecast ?? null, prior: e.prev ?? null, actual: e.actual ?? null, src: "Unusual Whales", at: e.time }; })
+    .filter((e: any) => days.includes(e.date)).sort((a: any, b: any) => String(a.at).localeCompare(String(b.at)));
+  if (ev.length) return { events: ev, pending: false };
+  const k = `econ:${days[0]}`; const c = await kvGet<any>(k, null);
+  const fresh = c && Date.now() - Date.parse(c.at) < 12 * 3600000;
+  if (!fresh) {
+    const run = async () => { const lock = await kvGet<number>(k + ":run", 0); if (Date.now() - lock < 4 * 60000) return; await kvSet(k + ":run", Date.now());
+      try { const r = await grokJson(`List the US economic releases and Federal Reserve events scheduled ${days[0]} through ${days[4]} (Eastern time): FOMC decisions and minutes, Fed chair speeches, CPI, PPI, PCE, jobs report, jobless claims, GDP, retail sales, ISM, consumer sentiment, housing data and Treasury auctions that move markets. ` +
+          `Use official calendars (BLS, BEA, Census, Federal Reserve) and consensus from major financial calendars. Include the actual figure when it has been released. Use null when unknown. Don't invent events.`,
+          `{"events":[{"date":"YYYY-MM-DD","time":"8:30 AM","name":"","kind":"fed|inflation|jobs|growth|consumer|housing|other","importance":"high|medium|low","consensus":"","prior":"","actual":null}]}`,
+          { web: true, model: GROK_FAST, maxTurns: 4, timeoutMs: 120000 });
+        const ev = (r.data?.events ?? []).filter((e: any) => e && e.date && e.name && days.includes(String(e.date).slice(0, 10)));
+        await kvSet(k, { at: new Date().toISOString(), events: ev });
+      } finally { await kvSet(k + ":run", 0); } };
+    if (wait) await run().catch(() => {}); else bgRun(run());
+  }
+  return { events: c?.events ?? [], pending: !fresh && !c };
+}
+export async function calendar(date?: string) {
+  const today = new Date().toISOString().slice(0, 10);
+  const days = weekOf(/^\d{4}-\d{2}-\d{2}$/.test(date ?? "") ? date! : today);
+  const [lists, models, watch, opal, sig, econ] = await Promise.all([
+    Promise.all(days.flatMap((d) => [erDay(d, "premarket"), erDay(d, "afterhours")])),
+    sql`select id, name, holdings from odesa.models order by sort, id`, sql`select ticker from odesa.watchlist`,
+    sql`select id, coalesce(title, question) title, created_at, result->'tickers' tk from odesa.opal_runs where status = 'done' and created_at > now() - interval '45 days' order by created_at desc limit 40`,
+    safe(overlap(7, 400), [] as any[]), econWeek(days),
+  ]);
+  const inM: Record<string, any[]> = {};
+  for (const m of models) for (const h of (m.holdings ?? [])) if (!h.cash) (inM[String(h.t).toUpperCase()] ??= []).push({ name: m.name, w: h.w });
+  const wl = new Set(watch.map((r: any) => String(r.ticker).toUpperCase()));
+  const op: Record<string, any[]> = {};
+  for (const r of opal) for (const t of Object.keys(r.tk ?? {})) (op[t.toUpperCase()] ??= []).length < 3 && op[t.toUpperCase()].push({ id: r.id, title: String(r.title ?? "").slice(0, 80) });
+  const sg: Record<string, any> = Object.fromEntries((sig as any[]).map((o) => [o.ticker, { srcs: o.srcs, score: o.score, count: o.count }]));
+  const tag = (x: any) => { const tg: any = {}; if (inM[x.t]) tg.models = inM[x.t]; if (wl.has(x.t)) tg.watch = true; if (op[x.t]) tg.opal = op[x.t]; if (sg[x.t]) tg.signals = sg[x.t];
+    return { ...x, tags: tg, flagged: Object.keys(tg).length > 0 }; };
+  const sort = (a: any, b: any) => (Number(b.flagged) - Number(a.flagged)) || ((b.tags.models ? 1 : 0) - (a.tags.models ? 1 : 0)) || ((b.mcap ?? 0) - (a.mcap ?? 0));
+  const out: Record<string, any> = {};
+  days.forEach((d, i) => { out[d] = { pre: lists[i * 2].map(tag).sort(sort), post: lists[i * 2 + 1].map(tag).sort(sort) }; });
+  return { days, today, by_day: out, econ: econ.events, econ_pending: econ.pending };
+}

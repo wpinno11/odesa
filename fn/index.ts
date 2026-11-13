@@ -217,6 +217,7 @@ async function route(c: Ctx): Promise<unknown> {
 
   // ---------------- research
   if (a === "stock") return d === "summary" ? await R.summary(String(b), c.q.get("force") === "1") : await R.stock(String(b));
+  if (a === "calendar") return await R.calendar(String(c.q.get("date") ?? ""));
   if (a === "research" && b && d === "earnings") {
     if (m === "POST") return await CALLS.start(String(b));
     return await CALLS.get(String(b), (await sql`select id, name, holdings from odesa.models`) as any);
