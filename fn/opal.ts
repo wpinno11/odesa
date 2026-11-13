@@ -142,7 +142,7 @@ Answer ONLY with JSON:
               "next": ["one sentence per direction: If ..., then ..., so ..."], "board": "1-2 sentences: who wins, who loses, why"},
  "items": {"TICKER": "<=18 words: why this name, as cause -> effect"},
  "deep_cuts": [{"ticker": "", "name": "", "cap": "small|mid|large", "direction": "long|short|avoid", "how": "shares|call|put|put sale|pair|spread",
-                "timing": "now|weeks|months", "chain": ["the news", "so ...", "so ...", "so this company ..."], "why_hidden": "why most people miss it, <=16 words",
+                "timing": "now|weeks|months", "chain": ["what happened, in a few real words (never just 'the news')", "so ...", "so ...", "so this company ..."], "why_hidden": "why most people miss it, <=16 words",
                 "watch": "the sign it is working, <=12 words", "kills_it": "<=12 words", "confidence": 0-100}]}
 story.steps: 4 to 6 steps, starting with the news and ending with where the money moves. Give a number on a step only when the run has one.
 These are research ideas for a professional to evaluate, not personal advice.`;
