@@ -307,31 +307,28 @@ export async function overlap(days = 7, limit = 40) {
   }).sort((a, b) => b.count - a.count || b.score - a.score).slice(0, limit);
 }
 
-/** Signals coming together: 3+ independent kinds of source on one name within 48 hours (options flow, X, call reads, congress, contracts/lobbying, Opal). */
-const FAMILY: Record<string, string> = { F: "options", S: "options", X: "X chatter", T: "call read", C: "congress", Q: "contracts/lobbying" };
+/** Signals coming together: 3+ independent kinds on one name within 48 hours. X and Opal count together as one ("chatter"),
+ *  and options only count when the flow itself was unusual (an unusual-options score of 70+, or quiet steady call buying). */
+const FAMILY: Record<string, string> = { X: "chatter", T: "call read", C: "congress", Q: "contracts/lobbying" };
 export async function notifyOverlaps() {
-  const rows = await sql`select ticker, src, count(*)::int n, sum(case when src = 'F' then (detail->>'premium')::numeric else 0 end)::float8 prem,
-      sum(case when src = 'F' and detail->>'kind' = 'call' then (detail->>'premium')::numeric else 0 end)::float8 cprem,
-      string_agg(case when src = 'X' then detail->>'tone' end, ',') tones
-    from odesa.signals where ts > now() - interval '48 hours' and src in ('F','S','X','T','C','Q') group by ticker, src`;
+  const rows = await sql`select ticker, src, string_agg(case when src = 'X' then detail->>'tone' end, ',') tones
+    from odesa.signals where ts > now() - interval '48 hours' and src in ('S','X','T','C','Q') group by ticker, src`;
+  const flow = await sql`select ticker, max(score)::int s, string_agg(distinct bias, ',') b from odesa.alerts where lane = 'flow' and score >= 70 and at > now() - interval '48 hours' group by ticker`;
   const opal = await sql`select result->'tickers' tk from odesa.opal_runs where status = 'done' and created_at > now() - interval '48 hours'`;
-  const by: Record<string, { fam: Set<string>; prem: number; cprem: number; tones: string }> = {};
-  for (const r of rows) {
-    const b = by[r.ticker as string] ??= { fam: new Set(), prem: 0, cprem: 0, tones: "" };
-    if (r.src === "F") { b.prem += r.prem; b.cprem += r.cprem; if (r.prem < 1e6) continue; }
-    b.fam.add(FAMILY[r.src as string]); if (r.tones) b.tones += "," + r.tones;
-  }
-  for (const r of opal) for (const t of Object.keys(r.tk ?? {})) (by[t.toUpperCase()] ??= { fam: new Set(), prem: 0, cprem: 0, tones: "" }).fam.add("Opal");
+  const by: Record<string, { fam: Set<string>; tones: string; flowBias: string | null }> = {};
+  const get = (t: string) => by[t] ??= { fam: new Set(), tones: "", flowBias: null };
+  for (const r of rows) { const b = get(r.ticker as string); b.fam.add(r.src === "S" ? "unusual options" : FAMILY[r.src as string]); if (r.tones) b.tones += "," + r.tones; }
+  for (const r of flow) { const b = get(r.ticker as string); b.fam.add("unusual options"); b.flowBias = String(r.b).includes(",") ? null : r.b; }
+  for (const r of opal) for (const t of Object.keys(r.tk ?? {})) get(t.toUpperCase()).fam.add("chatter");
   const uni = new Set(await universe()); const day = etNow().date; let sent = 0;
   for (const [t, b] of Object.entries(by)) {
     if (b.fam.size < 3) continue;
-    const flowBias = b.prem ? (b.cprem / b.prem > 0.65 ? "bullish" : b.cprem / b.prem < 0.35 ? "bearish" : null) : null;
     const xBias = /bull/.test(b.tones) && !/bear/.test(b.tones) ? "bullish" : /bear/.test(b.tones) && !/bull/.test(b.tones) ? "bearish" : null;
-    const clash = flowBias && xBias && flowBias !== xBias;
+    const clash = b.flowBias && xBias && b.flowBias !== xBias;
     const score = 50 + 10 * b.fam.size + (uni.has(t) ? 5 : 0) + (clash ? -8 : 0);
     const fams = [...b.fam].sort();
-    const r = await alert({ lane: "converge", ticker: t, score, bias: (flowBias ?? xBias ?? "neutral") as any, key: `conv:${t}:${day}:${fams.join("+")}`,
-      title: `${t}: ${b.fam.size} kinds of signal agree`, why: `${fams.join(" + ")} in the last 48 hours${b.prem ? ` · ${money(b.prem)} of options` : ""}${clash ? " · flow and X disagree on direction" : ""}`, url: `#signal/${t}` });
+    const r = await alert({ lane: "converge", ticker: t, score, bias: (b.flowBias ?? xBias ?? "neutral") as any, key: `conv:${t}:${day}:${fams.join("+")}`,
+      title: `${t}: ${b.fam.size} kinds of signal agree`, why: `${fams.join(" + ")} in the last 48 hours${clash ? " · options and X disagree on direction" : ""}`, url: `#signal/${t}` });
     if ((r as any).buzzed) sent++;
   }
   return sent;
@@ -348,13 +345,16 @@ export async function warnings(only?: string) {
   for (const t of names) {
     try {
       const w: { k: string; why: string; severe?: boolean }[] = [];
-      const [pb] = await sql`select coalesce(sum((detail->>'premium')::numeric), 0)::float8 p from odesa.signals where src = 'F' and ticker = ${t} and ts > now() - interval '5 days' and detail->>'kind' = 'put' and detail->>'side' = 'bought'`;
-      if (pb.p >= 1e6) w.push({ k: "puts", why: `${money(pb.p)} of puts bought in 5 days` });
+      const [pb] = await sql`select coalesce(sum((detail->>'premium')::numeric) filter (where detail->>'kind' = 'put'), 0)::float8 p,
+          coalesce(sum((detail->>'premium')::numeric) filter (where detail->>'kind' = 'call'), 0)::float8 c
+        from odesa.signals where src = 'F' and ticker = ${t} and ts > now() - interval '5 days' and detail->>'side' = 'bought'`;
+      if (pb.p >= 1e6 && pb.p >= 2 * pb.c) w.push({ k: "puts", why: `${money(pb.p)} of puts bought in 5 days, ${pb.c ? (pb.p / pb.c).toFixed(1) + "× the calls" : "almost no calls"}` });
       const ins = await UW.raw("/api/insider/transactions", { ticker_symbol: t, limit: 40 }).catch(() => []);
       const sells = (Array.isArray(ins) ? ins : []).filter((x: any) => String(x.ticker ?? t).toUpperCase() === t && (x.transaction_code === "S" || x.code === "S")
         && Date.parse(x.transaction_date ?? x.filing_date ?? 0) > Date.now() - 30 * 86400000);
       const sellers = new Set(sells.map((x: any) => x.owner_name ?? x.insider_name ?? x.name)); const sellAmt = sells.reduce((s: number, x: any) => s + Math.abs(Number(x.amount ?? 0) * Number(x.price ?? x.stock_price ?? 0) || 0), 0);
-      if (sellers.size >= 2 || sellAmt >= 5e6) w.push({ k: "insiders", why: `${sellers.size} insider${sellers.size === 1 ? "" : "s"} sold${sellAmt ? ` ${money(sellAmt)}` : ""} in 30 days` });
+      const mcap = Number(scr[t]?.marketcap ?? 0);
+      if ((sellers.size >= 3 && sellAmt >= 1e6) || (mcap ? sellAmt >= mcap * 0.0002 : sellAmt >= 2.5e7)) w.push({ k: "insiders", why: `${sellers.size} insider${sellers.size === 1 ? "" : "s"} sold${sellAmt ? ` ${money(sellAmt)}` : ""} in 30 days` });
       const si = Number(scr[t]?.short_int ?? scr[t]?.short_interest ?? NaN);
       if (Number.isFinite(si)) { const h = hist[t] ??= []; if (h[h.length - 1]?.d !== today) h.push({ d: today, v: si }); hist[t] = h.slice(-40);
         const old = h.find((x) => Date.parse(today) - Date.parse(x.d) >= 12 * 86400000 && Date.parse(today) - Date.parse(x.d) <= 30 * 86400000);
