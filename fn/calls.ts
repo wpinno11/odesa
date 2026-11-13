@@ -154,7 +154,7 @@ async function priorTranscript(t: string, latest: any) {
 export async function start(t: string) {
   t = t.toUpperCase();
   const cur = await kvGet<any>(`call:${t}`, null);
-  if (cur?.status === "running" && Date.now() - Date.parse(cur.started) < 12 * 60000) return { status: "running", started: cur.started, call_date: cur.call_date };
+  if (cur?.status === "running" && Date.now() - Date.parse(cur.started) < 8 * 60000) return { status: "running", started: cur.started, call_date: cur.call_date };
   const cap = Number((await kvGet<any>("settings", {})).grok_cap_usd ?? 300), spent = await monthCost("grok");
   if (spent + 1 > cap) throw new Error(`Grok monthly cap would be passed ($${spent.toFixed(2)} of $${cap} used). Raise it in Settings.`);
   let tr: any = null; try { tr = await ROIC.latest(t); } catch (_) { /* none */ }
@@ -164,7 +164,7 @@ export async function start(t: string) {
   const langUser = `Company: ${t}. Earnings call for fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, held ${date}.\nReturn JSON matching:\n${LANG_SHAPE}\n\n` +
     `CURRENT TRANSCRIPT:\n${String(tr.content).slice(0, 100000)}\n\n` + (prior ? `PRIOR QUARTER TRANSCRIPT (fiscal ${prior.year} Q${prior.quarter}, ${prior.date}):\n${prior.content.slice(0, 45000)}` : "PRIOR QUARTER TRANSCRIPT: not available. Mark deltas as not re-verified.");
   const streetUser = `Company: ${t}. Latest earnings: fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, call held ${date}. Today is ${new Date().toISOString().slice(0, 10)}.\nReturn JSON matching:\n${STREET_SHAPE}`;
-  const a = { id: "d:" + await deferredSubmit({ model: GROK_DEEP, messages: [{ role: "system", content: SYS + (await rulesText(true)) }, { role: "user", content: langUser }] }) };
+  const a = { id: "d:" + await deferredSubmit({ model: GROK_FAST, messages: [{ role: "system", content: SYS + (await rulesText(true)) }, { role: "user", content: langUser }] }) };
   const [b] = await XAI({ model: GROK_FAST, input: [{ role: "system", content: STREET_SYS }, { role: "user", content: streetUser }], tools: [{ type: "web_search" }], max_turns: 5 });
   const v = { status: "running", started: new Date().toISOString(), reqs: { lang: a.id, street: b.id }, parts: {}, cost: 0, call_date: date, year: tr.year, quarter: tr.quarter,
     transcript: String(tr.content).slice(0, 200000), prior_date: prior?.date ?? null };
@@ -214,7 +214,7 @@ export async function get(t: string, models: { id: number; name: string; holding
     }
     cur = await kvGet<any>(`call:${t}`, cur);
     const done = ["lang", "street"].filter((p) => cur.parts?.[p] && !cur.parts[p].claimed);
-    const expired = Date.now() - Date.parse(cur.started) > 12 * 60000;
+    const expired = Date.now() - Date.parse(cur.started) > 8 * 60000;
     if (done.length === 2 || expired) {
       for (const p of ["lang", "street"]) if (!cur.parts?.[p] || cur.parts[p].claimed) cur.parts[p] = { r: null, err: "took too long" };
       const any = cur.parts.lang.r || cur.parts.street.r;

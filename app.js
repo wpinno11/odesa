@@ -1269,12 +1269,12 @@ async function loadEarnings(d, st) {
       el.querySelectorAll("[data-et]").forEach((b) => b.onclick = () => { st.etab = b.dataset.et; paint(); }); };
     paint(); clearTimeout(st.etimer); st.etimer = setTimeout(() => loadEarnings(d, st), 10000); return; }
   if (E.status === "running") { const secs = Math.round((Date.now() - Date.parse(E.started)) / 1000);
-    el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="empty" style="padding:14px 8px"><span class="spin"></span><div style="margin-top:8px">Call Surgeon is reading the ${E.call_date ? F.date(E.call_date) + " " : ""}call and checking it against the report and the Street.<br><span class="tiny">The numbers show first (about a minute); the full read of the call follows in a few minutes. You can leave and come back. · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} so far</span></div></div></div>`;
+    el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="empty" style="padding:14px 8px"><span class="spin"></span><div style="margin-top:8px">Call Surgeon is reading the ${E.call_date ? F.date(E.call_date) + " " : ""}call and checking it against the report and the Street.<br><span class="tiny">Usually 1–2 minutes. You can leave and come back. · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} so far</span></div></div></div>`;
     clearTimeout(st.etimer); st.etimer = setTimeout(() => loadEarnings(d, st), 10000); return; }
   if (E.status === "none") { el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="small muted" style="margin-top:6px">No earnings call transcript found for ${esc(d.ticker)} yet.</div></div>`; return; }
   const auto = (d.models || []).length || d.watch;
   el.innerHTML = `<div class="card"><h2 class="h2">Earnings</h2><div class="small muted" style="margin-top:4px">${E.status === "error" ? esc(E.error || "The last try didn't finish.") : `Latest call: ${E.quarter ? "Q" + esc(E.quarter) + " " : ""}${E.year ? esc(E.year) + " · " : ""}${E.call_date ? F.date(E.call_date) : ""}`}</div>
-    <button class="btn primary" id="er-go" style="margin-top:12px">Break down the call</button><div class="tiny muted" style="margin-top:6px">Results vs Street, what drove it, price targets, key quotes and read-throughs. Numbers in about a minute, the full read in a few. Saved after that, and new calls for your names are done ahead of time.</div></div>`;
+    <button class="btn primary" id="er-go" style="margin-top:12px">Break down the call</button><div class="tiny muted" style="margin-top:6px">Results vs Street, what drove it, price targets, key quotes and read-throughs. About 1–2 minutes. Saved after that, and new calls for your names are done ahead of time.</div></div>`;
   $("#er-go").onclick = start;
   if (auto && E.status === "ready" && !st.autoStarted) { st.autoStarted = true; start(); }
 }
@@ -1430,7 +1430,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {
