@@ -24,7 +24,7 @@ function logout(silent) { TOKEN = null; try { localStorage.removeItem("odesa_tok
 // ---------------------------------------------------------------- formatting
 const F = {
   money(n, d = 0) { if (n === null || n === undefined || isNaN(n)) return "–"; const a = Math.abs(n); const s = n < 0 ? "−" : "";
-    if (a >= 1e9) return `${s}$${(a / 1e9).toFixed(1)}B`; if (a >= 1e6) return `${s}$${(a / 1e6).toFixed(1)}M`; if (a >= 1e4 && d === 0) return `${s}$${Math.round(a / 1e3)}K`;
+    if (a >= 1e12) return `${s}$${(a / 1e12).toFixed(2)}T`; if (a >= 1e9) return `${s}$${(a / 1e9).toFixed(1)}B`; if (a >= 1e6) return `${s}$${(a / 1e6).toFixed(1)}M`; if (a >= 1e4 && d === 0) return `${s}$${Math.round(a / 1e3)}K`;
     return `${s}$${a.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })}`; },
   usd(n) { return n === null || n === undefined || isNaN(n) ? "–" : (n < 0 ? "−$" : "$") + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
   px(n) { return n === null || n === undefined ? "–" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
@@ -457,7 +457,7 @@ async function vFeeds() {
           <div style="text-align:right"><div class="tiny" style="color:${st[1]};font-weight:700">● ${st[0]}</div><div class="n tiny muted">${x.today || 0} today${id === "grok" ? ` · ${F.usd(x.cost || 0)} / $${d.grok_cap}` : ""}</div>
           ${job ? `<button class="btn small soft" data-job="${job}" style="margin-top:4px;height:28px;font-size:12px">Run now</button>` : ""}</div></div>`; }).join("")}</div>
       <div class="card"><div class="eyebrow">Bots</div><p class="small" style="line-height:1.45">Every 5 minutes in market hours: options flow, sneaky calls, tracked trades. Every 30 minutes: one X sweep. Each trading morning: congress, lobbying and contracts, earnings IV, put sales, earnings calls.</p>
-        <div class="small muted">Last run: ${d.last_tick ? F.ago(d.last_tick.at) + " ago" : "not yet"}</div>
+        <div class="small muted">Last run: ${d.last_tick ? (F.ago(d.last_tick.at) === "now" ? "just now" : F.ago(d.last_tick.at) + " ago") : "not yet"}</div>
         <div class="grid2" style="margin-top:10px">${[["congress", "Congress"], ["earnings", "Earnings IV"], ["putsales", "Put sales"], ["mark", "Mark trades"]].map(([j, l]) => `<button class="btn small soft" data-job="${j}" style="width:100%">${l}</button>`).join("")}</div></div>`);
     $$("[data-job]").forEach((b) => b.onclick = async () => { b.disabled = true; const t = b.textContent; b.textContent = "Running…";
       try { const r = await api("/feeds/run", { body: { job: b.dataset.job } }); toast("Done: " + JSON.stringify(r).slice(0, 80), 3500); } catch (e) { toast(e.message, 4000); } b.disabled = false; b.textContent = t; });
@@ -618,7 +618,7 @@ async function vStock(t) {
       <div class="grid2" style="margin:14px 16px 0"><a class="btn primary" href="#options/new">Options idea</a><button class="btn ghost" id="askopal">Ask Opal</button></div>`);
     $("#addw").onclick = async () => { await api("/watchlist", { body: { ticker: t } }); toast("Added to watchlist"); };
     $("#askopal").onclick = async () => { const r = await api("/opal", { body: { q: `What is driving ${t} right now, and what comes next for it and its suppliers and competitors?` } }); location.hash = "#opal/run/" + r.id; };
-    const sum = (s) => { fill("#st-sum-at", s.at ? F.ago(s.at) + " ago" : ""); fill("#st-sum-b", [["X", "On X", s.x], ["T", "Latest news", s.news], ["E", "Last call", s.call]].filter((x) => x[2]).map(([k, h, v]) => `<div style="display:grid;grid-template-columns:26px 1fr;gap:10px;padding-top:12px">${dot(k === "E" ? "T" : k, 26)}<div><div class="small muted" style="font-weight:700">${h}</div><div style="font-size:15px;line-height:1.35">${esc(v)}</div></div></div>`).join("")
+    const sum = (s) => { fill("#st-sum-at", s.at ? (F.ago(s.at) === "now" ? "just now" : F.ago(s.at) + " ago") : ""); fill("#st-sum-b", [["X", "On X", s.x], ["T", "Latest news", s.news], ["E", "Last call", s.call]].filter((x) => x[2]).map(([k, h, v]) => `<div style="display:grid;grid-template-columns:26px 1fr;gap:10px;padding-top:12px">${dot(k === "E" ? "T" : k, 26)}<div><div class="small muted" style="font-weight:700">${h}</div><div style="font-size:15px;line-height:1.35">${esc(v)}</div></div></div>`).join("")
       + `<button class="btn small soft" id="st-re" style="margin-top:12px">Refresh</button>`); $("#st-re").onclick = () => { fill("#st-sum-b", spinner()); api(`/stock/${t}/summary?force=1`).then(sum).catch((e) => fill("#st-sum-b", err(e))); }; };
     if (d.summary) sum(d.summary); else api(`/stock/${t}/summary`).then(sum).catch((e) => fill("#st-sum-b", err(e)));
   } catch (e) { fill("#st-body", err(e)); }
