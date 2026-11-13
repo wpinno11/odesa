@@ -122,6 +122,22 @@ const XAI = (body: any) => sql`select net.http_post(url := 'https://api.x.ai/v1/
   headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'XAI_API_KEY'), 'Content-Type', 'application/json'),
   timeout_milliseconds := 240000) as id`;
 
+// Deferred Grok job: xAI holds the work and we pick it up later, so nothing waits on an open connection (no time limit, no shared queue).
+async function deferredSubmit(body: any): Promise<string> {
+  const k = await (await import("./db.ts")).key("XAI_API_KEY");
+  const r = await fetch("https://api.x.ai/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, deferred: true }), signal: AbortSignal.timeout(30000) });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j?.request_id) throw new Error(`Grok wouldn't start the breakdown (${r.status})`);
+  return j.request_id;
+}
+async function deferredPoll(id: string): Promise<{ status_code: number; content: string } | null> {
+  const k = await (await import("./db.ts")).key("XAI_API_KEY");
+  const r = await fetch(`https://api.x.ai/v1/chat/deferred-completion/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${k}` }, signal: AbortSignal.timeout(20000) }).catch(() => null);
+  if (!r || r.status === 202) return null;
+  return { status_code: r.status, content: await r.text() };
+}
+
 async function priorTranscript(t: string, latest: any) {
   try {
     const k = await (await import("./db.ts")).key("ROIC_API_KEY"); if (!k) return null;
@@ -138,7 +154,7 @@ async function priorTranscript(t: string, latest: any) {
 export async function start(t: string) {
   t = t.toUpperCase();
   const cur = await kvGet<any>(`call:${t}`, null);
-  if (cur?.status === "running" && Date.now() - Date.parse(cur.started) < 6 * 60000) return { status: "running", started: cur.started, call_date: cur.call_date };
+  if (cur?.status === "running" && Date.now() - Date.parse(cur.started) < 12 * 60000) return { status: "running", started: cur.started, call_date: cur.call_date };
   const cap = Number((await kvGet<any>("settings", {})).grok_cap_usd ?? 300), spent = await monthCost("grok");
   if (spent + 1 > cap) throw new Error(`Grok monthly cap would be passed ($${spent.toFixed(2)} of $${cap} used). Raise it in Settings.`);
   let tr: any = null; try { tr = await ROIC.latest(t); } catch (_) { /* none */ }
@@ -146,9 +162,9 @@ export async function start(t: string) {
   const date = String(tr.date ?? "").slice(0, 10);
   const prior = await priorTranscript(t, tr);
   const langUser = `Company: ${t}. Earnings call for fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, held ${date}.\nReturn JSON matching:\n${LANG_SHAPE}\n\n` +
-    `CURRENT TRANSCRIPT:\n${String(tr.content).slice(0, 100000)}\n\n` + (prior ? `PRIOR QUARTER TRANSCRIPT (fiscal ${prior.year} Q${prior.quarter}, ${prior.date}):\n${prior.content.slice(0, 60000)}` : "PRIOR QUARTER TRANSCRIPT: not available. Mark deltas as not re-verified.");
+    `CURRENT TRANSCRIPT:\n${String(tr.content).slice(0, 100000)}\n\n` + (prior ? `PRIOR QUARTER TRANSCRIPT (fiscal ${prior.year} Q${prior.quarter}, ${prior.date}):\n${prior.content.slice(0, 45000)}` : "PRIOR QUARTER TRANSCRIPT: not available. Mark deltas as not re-verified.");
   const streetUser = `Company: ${t}. Latest earnings: fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, call held ${date}. Today is ${new Date().toISOString().slice(0, 10)}.\nReturn JSON matching:\n${STREET_SHAPE}`;
-  const [a] = await XAI({ model: GROK_DEEP, input: [{ role: "system", content: SYS + (await rulesText(true)) }, { role: "user", content: langUser }] });
+  const a = { id: "d:" + await deferredSubmit({ model: GROK_DEEP, messages: [{ role: "system", content: SYS + (await rulesText(true)) }, { role: "user", content: langUser }] }) };
   const [b] = await XAI({ model: GROK_FAST, input: [{ role: "system", content: STREET_SYS }, { role: "user", content: streetUser }], tools: [{ type: "web_search" }], max_turns: 5 });
   const v = { status: "running", started: new Date().toISOString(), reqs: { lang: a.id, street: b.id }, parts: {}, cost: 0, call_date: date, year: tr.year, quarter: tr.quarter,
     transcript: String(tr.content).slice(0, 200000), prior_date: prior?.date ?? null };
@@ -160,6 +176,7 @@ function readResponse(resp: any) {
   let j: any = null; try { j = JSON.parse(resp.content); } catch { /* cut off */ }
   const cost = Number(j?.usage?.cost_in_usd_ticks ?? 0) / 1e10;
   let text = ""; const cites: any[] = [];
+  for (const ch of j?.choices ?? []) text += ch?.message?.content ?? "";
   for (const it of j?.output ?? []) if (it.type === "message") for (const p of it.content ?? []) { text += p.text ?? ""; for (const a of p.annotations ?? []) if (a.url) cites.push({ url: a.url, title: a.title }); }
   const r = resp.status_code === 200 ? parseJson(text) : null;
   return { r: r && typeof r === "object" && !Array.isArray(r) ? r : null, cost, cites, err: resp.timed_out ? "timed out" : resp.status_code !== 200 ? `Grok error ${resp.status_code ?? ""}` : null };
@@ -183,7 +200,8 @@ export async function get(t: string, models: { id: number; name: string; holding
   if (cur?.status === "running" && cur.reqs) {
     for (const part of ["lang", "street"]) {
       if (cur.parts?.[part]) continue;
-      const [resp] = await sql`select status_code, content, error_msg, timed_out from net._http_response where id = ${cur.reqs[part]}`;
+      const rid = String(cur.reqs[part]);
+      const [resp] = rid.startsWith("d:") ? [await deferredPoll(rid.slice(2))] : await sql`select status_code, content, error_msg, timed_out from net._http_response where id = ${cur.reqs[part]}`;
       if (!resp) continue;
       // claim this half so two polls never process (or bill) it twice
       const claimed = await sql`update odesa.kv set v = jsonb_set(v, ${sql.array(["parts", part])}, '{"claimed":true}'::jsonb) where k = ${"call:" + t} and not (v->'parts' ? ${part}) returning k`;
@@ -196,7 +214,7 @@ export async function get(t: string, models: { id: number; name: string; holding
     }
     cur = await kvGet<any>(`call:${t}`, cur);
     const done = ["lang", "street"].filter((p) => cur.parts?.[p] && !cur.parts[p].claimed);
-    const expired = Date.now() - Date.parse(cur.started) > 6 * 60000;
+    const expired = Date.now() - Date.parse(cur.started) > 12 * 60000;
     if (done.length === 2 || expired) {
       for (const p of ["lang", "street"]) if (!cur.parts?.[p] || cur.parts[p].claimed) cur.parts[p] = { r: null, err: "took too long" };
       const any = cur.parts.lang.r || cur.parts.street.r;
