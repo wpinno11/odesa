@@ -217,11 +217,20 @@ export function parseJson(text: string): any {
   let t = text.trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
   const starts = [t.indexOf("{"), t.indexOf("[")].filter((i) => i >= 0);
   if (!starts.length) return null;
-  const s = Math.min(...starts), e = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
-  if (e < s) return null;
-  t = t.slice(s, e + 1);
-  try { return JSON.parse(t); } catch { /* fall through */ }
-  try { return JSON.parse(t.replace(/,\s*([}\]])/g, "$1")); } catch { return null; }
+  const s = Math.min(...starts);
+  // find where the JSON value ends by matching brackets (string-aware), so any citation list after it is ignored
+  let depth = 0, inStr = false, esc = false, end = -1;
+  for (let i = s; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true; else if (ch === "{" || ch === "[") depth++; else if (ch === "}" || ch === "]") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  const cands = [end > s ? t.slice(s, end + 1) : null, t.slice(s, Math.max(t.lastIndexOf("}"), t.lastIndexOf("]")) + 1)].filter(Boolean) as string[];
+  for (const c of cands) {
+    try { return JSON.parse(c); } catch { /* next */ }
+    try { return JSON.parse(c.replace(/,\s*([}\]])/g, "$1")); } catch { /* next */ }
+  }
+  return null;
 }
 export async function grokJson(prompt: string, shape: string, o: Parameters<typeof grok>[1] = {}) {
   const r = await grok(`${prompt}\n\nReturn ONLY valid JSON matching this shape (no prose, no code fences):\n${shape}`, o);
