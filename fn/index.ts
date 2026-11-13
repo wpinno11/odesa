@@ -135,6 +135,17 @@ async function route(c: Ctx): Promise<unknown> {
       on conflict (model_id, name) do update set cash = excluded.cash, shares = excluded.shares, updated_at = now()`;
     return { ok: true };
   }
+  if (a === "models" && b === "parse" && m === "POST") {
+    // Read holdings out of any pasted text (spreadsheet rows, an email, a broker statement) with Grok, then check each ticker has a live price.
+    const text = String(c.body.text ?? "").slice(0, 20000); if (text.trim().length < 2) bad("Paste your list first.");
+    const r = await grokJson("Pull the stock/ETF/fund holdings out of this text. For each: ticker (US symbol; convert company names to tickers only when you are sure), " +
+      "name, and target weight in percent if the text gives one (else null). Treat cash/money market as {\"ticker\":\"CASH\",\"cash\":true}. Ignore totals, headers and anything that is not a holding.\n\nTEXT:\n" + text,
+      '[{"ticker":"","name":"","weight":null,"cash":false}]', { model: GROK_FAST, timeoutMs: 60000 });
+    const rows = (Array.isArray(r.data) ? r.data : []).map((x: any) => ({ t: String(x.ticker ?? "").toUpperCase().replace(/[^A-Z0-9.\-]/g, "").slice(0, 12), n: String(x.name ?? "").slice(0, 80),
+      w: x.weight === null || x.weight === undefined || x.weight === "" ? null : Number(x.weight), cash: !!x.cash })).filter((x: any) => x.t);
+    const q = await MD.quotes(rows.filter((x: any) => !x.cash).map((x: any) => x.t)).catch(() => ({} as any));
+    return rows.map((x: any) => ({ ...x, price: x.cash ? null : q[x.t]?.last ?? null, found: x.cash || !!q[x.t] }));
+  }
   if (a === "allocate") {
     const [mm] = await sql`select * from odesa.models where id = ${num(c.body.model_id, "model")}`; if (!mm) bad("Model not found.", 404);
     const h = (mm.holdings as any[]); const tk = h.filter((x) => !x.cash).map((x) => x.t);

@@ -204,6 +204,22 @@ async function vCalc(id) {
   $("#calc").onclick = run; $("#amt").onkeydown = (e) => { if (e.key === "Enter") run(); };
 }
 
+/** Forgiving list reader: "AAPL 9%", "MSFT, 8.5", "8% NVDA", "1. GOOGL – 5%", tab-separated rows, or just "AAPL MSFT NVDA". */
+function parseList(text) {
+  const out = []; const seen = new Set(); const STOP = new Set(["THE", "AND", "INC", "CORP", "CO", "LTD", "ETF", "FUND", "TOTAL", "CASH", "USD", "PCT", "NAME", "TICKER", "SYMBOL", "WEIGHT", "TARGET", "SHARES", "PRICE", "VALUE", "CLASS", "A", "B", "C"]);
+  const lines = text.split(/\n|;/).map((l) => l.trim()).filter(Boolean);
+  const single = lines.length === 1 && !/\d/.test(lines[0]);
+  for (const line of single ? lines[0].split(/[\s,]+/) : lines) {
+    const ln = line.replace(/^\s*\d+[.)]\s+/, "");
+    const toks = ln.replace(/[()\[\]|•·–—]/g, " ").split(/[\s,\t:]+/).filter(Boolean);
+    const t = toks.map((x) => x.replace(/^\$/, "")).find((x) => /^[A-Z][A-Z0-9]{0,5}([.\-][A-Z])?$/.test(x) && !STOP.has(x));
+    if (!t || seen.has(t)) continue;
+    const rest = ln.replace(t, " ");
+    const num = (rest.match(/(\d+(?:\.\d+)?)\s*%/) || rest.match(/(\d+(?:\.\d+)?)/) || [])[1];
+    seen.add(t); out.push({ t, n: "", w: num !== undefined && Number(num) <= 100 ? Number(num) : null });
+  }
+  return out;
+}
 async function vManager(id) {
   page(`${hdr("Models", { back: "#portfolio", sub: "Edit holdings and targets. Each save keeps the last version so you can undo." })}<div id="m-body">${spinner()}</div>`, "portfolio");
   const ms = await getModels(true); let m = ms.find((x) => String(x.id) === String(id)) || ms[0];
@@ -231,10 +247,39 @@ async function vManager(id) {
     $("#addb").onclick = add; $("#addt").onkeydown = (e) => { if (e.key === "Enter") add(); };
     $("#even").onclick = () => { if (!H.length) return; const each = Math.floor(10000 / H.length); H.forEach((x, i) => x.w = each + (i < 10000 - each * H.length ? 1 : 0)); draw(); };
     $("#paste").onclick = () => {
-      const s = sheet(`<div style="padding:0 18px"><h2 class="h2">Paste holdings</h2><p class="small muted">One per line: ticker and target %. Example: <b>AAPL 9</b> or <b>MSFT, 8.5%</b></p>
-        <textarea class="box" id="pl" rows="10" placeholder="AAPL 9&#10;MSFT 9&#10;NVDA 8"></textarea><button class="btn primary" id="plok" style="margin-top:12px">Use this list</button></div>`);
-      $("#plok", s).onclick = () => { const out = []; for (const line of $("#pl", s).value.split(/\n/)) { const mm = line.trim().match(/^\$?([A-Za-z.\-]{1,10})[\s,;:\t]+\$?([\d.]+)\s*%?/); if (mm) out.push({ t: mm[1].toUpperCase(), w: Math.round(Number(mm[2]) * 100), n: "" }); }
-        if (!out.length) return toast("I couldn't read that. Use: TICKER percent"); H = out; s.remove(); draw(); };
+      const s = sheet(`<div style="padding:0 18px"><h2 class="h2">Add a list</h2>
+        <p class="small muted" style="line-height:1.45">Paste anything: rows copied from a spreadsheet, an email, a statement, or just tickers. Percentages are optional; without them the list is split evenly.</p>
+        <textarea class="box" id="pl" rows="9" placeholder="AAPL 9%&#10;MSFT 8.5&#10;NVDA, 8&#10;…or AAPL MSFT NVDA GOOGL"></textarea>
+        <div class="row" style="margin-top:10px"><label class="row small"><input type="checkbox" id="plrep" checked> Replace current holdings</label></div>
+        <button class="btn primary" id="plok" style="margin-top:12px">Read my list</button><div id="plout"></div></div>`);
+      $("#plok", s).onclick = async () => {
+        const text = $("#pl", s).value; if (!text.trim()) return toast("Paste your list first.");
+        let rows = parseList(text);
+        const messy = text.split(/\n/).filter((l) => l.trim()).length > rows.length + 1 || /[a-z]{4,}/.test(text);
+        if (!rows.length || messy) {
+          $("#plok", s).disabled = true; fill("#plout", spinner("Reading your list"));
+          try { const r = await api("/models/parse", { body: { text } }); if (r.length) rows = r.map((x) => ({ t: x.t, n: x.n, w: x.w, cash: x.cash, found: x.found })); }
+          catch (e) { if (!rows.length) { fill("#plout", `<p class="small" style="color:var(--down)">${esc(e.message)}</p>`); $("#plok", s).disabled = false; return; } }
+          $("#plok", s).disabled = false;
+        }
+        if (!rows.length) return fill("#plout", `<p class="small" style="color:var(--down)">I couldn't find any tickers in that.</p>`);
+        const haveW = rows.some((x) => x.w !== null && x.w !== undefined && !isNaN(x.w));
+        let out = rows.map((x) => ({ t: x.t, n: x.n || "", w: haveW ? Math.round((Number(x.w) || 0) * 100) : 0, cash: !!x.cash, found: x.found }));
+        if (!haveW) { const each = Math.floor(10000 / out.length); out.forEach((x, k) => x.w = each + (k < 10000 - each * out.length ? 1 : 0)); }
+        const show = () => {
+        const tot = out.reduce((a, x) => a + x.w, 0); const missing = out.filter((x) => x.found === false).map((x) => x.t);
+        fill("#plout", `<div class="card" style="margin:12px 0 0">${out.map((x) => `<div class="row between small" style="padding:4px 0"><b>${esc(x.t)}</b><span class="muted grow1" style="margin-left:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(x.n)}</span><span class="n">${F.bps(x.w)}</span></div>`).join("")}
+          <div class="row between" style="margin-top:8px;font-weight:700"><span>${out.length} holdings</span><span class="n ${tot === 10000 ? "up" : "down"}">${F.bps(tot)}</span></div>
+          ${missing.length ? `<p class="tiny" style="color:var(--down)">No live price found for ${esc(missing.join(", "))}. Check those tickers.</p>` : ""}
+          ${tot !== 10000 && tot > 0 ? `<button class="btn small soft" id="plscale" style="margin-top:8px;width:100%">Scale to 100%</button>` : ""}
+          <button class="btn primary" id="pluse" style="margin-top:10px">Use these ${out.length}</button></div>`);
+        const sc = $("#plscale", s); if (sc) sc.onclick = () => { const k = 10000 / tot; out.forEach((x) => x.w = Math.round(x.w * k)); const d = 10000 - out.reduce((a, x) => a + x.w, 0); out[0].w += d; show(); };
+        $("#pluse", s).onclick = () => { const clean = out.map(({ t, n, w, cash }) => ({ t, n, w, cash }));
+          if ($("#plrep", s).checked) H = clean; else for (const x of clean) { const e = H.find((h) => h.t === x.t); if (e) e.w = x.w; else H.push(x); }
+          s.remove(); draw(); toast(`Added ${clean.length}. Check the total, then Save model.`); };
+        };
+        show();
+      };
     };
     $("#save").onclick = async () => { try { m.name = $("#mname").value; const r = await api("/models/" + m.id, { body: { name: m.name, holdings: H } }); MEM.models = null; toast("Saved"); m = r; } catch (e) { toast(e.message, 4000); } };
     $("#undo").onclick = async () => { try { await api(`/models/${m.id}/undo`, { body: {} }); MEM.models = null; toast("Restored the previous version"); vManager(m.id); } catch (e) { toast(e.message); } };
