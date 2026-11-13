@@ -211,7 +211,12 @@ function parseList(text) {
   const TK = /^\$?([A-Z][A-Z0-9]{0,5}(?:[.\-][A-Z])?)$/;
   const out = [], seen = new Set();
   const lines = String(text).replace(/[^\S \t]+/g, "\n").split(/\n|;/).map((l) => l.replace(/^\s*\d+[.)]\s+/, "").trim()).filter(Boolean);
+  const CASHRE = /\b(cash|money\s*market|mmf|sweep|spaxx|swvxx|vmfxx|fdrxx|sweep)\b/i;
   for (const line of lines) {
+    if (CASHRE.test(line) && !seen.has("CASH")) {
+      const n = (line.match(/\d+(?:\.\d+)?%?/g) || []).find((x) => x.endsWith("%")) ?? (line.match(/\d+(?:\.\d+)?/g) || [])[0];
+      seen.add("CASH"); out.push({ t: "CASH", n: "Cash", w: n !== undefined && Number(n.replace("%", "")) <= 100 ? Number(n.replace("%", "")) : null, cash: true }); continue;
+    }
     const toks = line.replace(/[()\[\]|•·–—]/g, " ").split(/[\s,\t:]+/).filter(Boolean);
     const tick = toks.map((x, k) => ({ k, m: x.match(TK) })).filter((x) => x.m && !STOP.has(x.m[1]));
     const isNum = (x) => /^\d+(?:\.\d+)?%?$/.test(x || "");
@@ -238,11 +243,11 @@ async function vManager(id) {
       ${m ? `<div class="card"><div class="eyebrow">Name</div><input id="mname" class="inp" style="margin-top:6px;font-weight:700;font-size:18px" value="${esc(m.name)}"></div>
       <div class="card"><div class="row between"><h2 class="h2">Holdings</h2><button class="btn small soft" id="paste">Paste a list</button></div>
         <div class="field" style="margin-top:12px;height:44px"><input id="addt" placeholder="Add ticker (e.g. NVDA)" autocapitalize="characters"><button class="btn small primary" id="addb">Add</button></div>
-        ${H.map((x, i) => `<div class="li" style="cursor:default"><div class="grow1"><div style="font-weight:700">${esc(x.t)}</div><input class="inp" data-n="${i}" value="${esc(x.n || "")}" placeholder="Name (optional)" style="height:30px;font-size:13px;margin-top:4px;border:0;padding:0;background:transparent"></div>
+        ${H.map((x, i) => `<div class="li" style="cursor:default"><div class="grow1"><div style="font-weight:700">${x.cash ? "💵 Cash" : esc(x.t)}</div><input class="inp" data-n="${i}" value="${esc(x.n || "")}" placeholder="Name (optional)" style="height:30px;font-size:13px;margin-top:4px;border:0;padding:0;background:transparent"></div>
           <div class="row" style="gap:6px"><input class="inp n" data-w="${i}" inputmode="decimal" value="${(x.w / 100).toString()}" style="width:76px;text-align:right"><span class="muted">%</span>
           <button class="btn small soft" data-del="${i}" aria-label="Remove ${esc(x.t)}" style="width:38px;padding:0">✕</button></div></div>`).join("")}
         <div class="row between" style="padding:12px 0 2px;border-top:1px solid var(--line)"><span style="font-weight:600">Total</span><span class="n ${tot === 10000 ? "up" : "down"}" style="font-size:20px;font-weight:700">${F.bps(tot)} ${tot === 10000 ? "✓" : ""}</span></div>
-        <button class="btn soft small" id="even" style="margin-top:10px">Split evenly</button></div>
+        <div class="grid2" style="margin-top:10px"><button class="btn soft small" id="even">Split evenly</button><button class="btn soft small" id="rcash" ${tot >= 10000 ? "disabled" : ""}>Rest in cash${tot < 10000 ? " (" + F.bps(10000 - tot) + ")" : ""}</button></div></div>
       <div class="grid2" style="margin:14px 16px 0"><button class="btn primary" id="save">Save model</button><button class="btn ghost" id="undo">Undo last save</button></div>
       <button class="btn small soft" id="delm" style="margin:16px auto 0;color:var(--down)">Delete this model</button>` : ""}`);
     $("#newm").onclick = async () => { const n = prompt("Name for the new model?"); if (!n) return; const r = await api("/models", { body: { name: n, holdings: [] } }); MEM.models = null; location.hash = "#manager/" + r.id; };
@@ -251,8 +256,11 @@ async function vManager(id) {
     $$("[data-w]").forEach((el) => el.onchange = draw);
     $$("[data-n]").forEach((el) => el.oninput = () => { H[el.dataset.n].n = el.value; });
     $$("[data-del]").forEach((el) => el.onclick = () => { H.splice(Number(el.dataset.del), 1); draw(); });
-    const add = () => { const t = $("#addt").value.trim().toUpperCase(); if (!t) return; if (H.find((x) => x.t === t)) return toast(t + " is already in the model."); H.push({ t, w: 0, n: "" }); draw(); };
+    const add = () => { const t = $("#addt").value.trim().toUpperCase(); if (!t) return; if (H.find((x) => x.t === t)) return toast(t + " is already in the model."); const isCash = /^(CASH|\$|USD|MONEY MARKET|MMF)$/.test(t);
+      if (isCash && H.find((x) => x.cash)) return toast("Cash is already in the model.");
+      H.push(isCash ? { t: "CASH", w: Math.max(0, 10000 - H.reduce((a, x) => a + (Number(x.w) || 0), 0)), n: "Cash", cash: true } : { t, w: 0, n: "" }); draw(); };
     $("#addb").onclick = add; $("#addt").onkeydown = (e) => { if (e.key === "Enter") add(); };
+    $("#rcash").onclick = () => { const left = 10000 - H.reduce((a, x) => a + (Number(x.w) || 0), 0); if (left <= 0) return; const c = H.find((x) => x.cash); if (c) c.w += left; else H.push({ t: "CASH", n: "Cash", w: left, cash: true }); draw(); toast("Added " + F.bps(left) + " cash. Tap Save model."); };
     $("#even").onclick = () => { if (!H.length) return; const each = Math.floor(10000 / H.length); H.forEach((x, i) => x.w = each + (i < 10000 - each * H.length ? 1 : 0)); draw(); };
     $("#paste").onclick = () => {
       const s = sheet(`<div style="padding:0 18px"><h2 class="h2">Add a list</h2>
@@ -263,8 +271,8 @@ async function vManager(id) {
       $("#plok", s).onclick = async () => {
         const text = $("#pl", s).value; if (!text.trim()) return toast("Paste your list first.");
         let rows = parseList(text);
-        const tickerish = (text.match(/\b[A-Z][A-Z0-9]{0,5}\b/g) || []).length;
-        const messy = /[a-z]{4,}/.test(text) || tickerish > rows.length + 2;
+        const tickerish = (text.match(/\b[A-Z][A-Z0-9]{0,5}\b/g) || []).filter((w) => w !== "CASH").length;
+        const messy = /[a-z]{4,}/.test(text.replace(/\b(cash|money\s*market)\b/gi, "")) || tickerish > rows.length + 2;
         if (!rows.length || messy) {
           $("#plok", s).disabled = true; fill("#plout", spinner("Reading your list"));
           try { const r = await api("/models/parse", { body: { text } }); if (r.length) rows = r.map((x) => ({ t: x.t, n: x.n, w: x.w, cash: x.cash, found: x.found })); }
@@ -280,8 +288,10 @@ async function vManager(id) {
         fill("#plout", `<div class="card" style="margin:12px 0 0">${out.map((x) => `<div class="row between small" style="padding:4px 0"><b>${esc(x.t)}</b><span class="muted grow1" style="margin-left:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(x.n)}</span><span class="n">${F.bps(x.w)}</span></div>`).join("")}
           <div class="row between" style="margin-top:8px;font-weight:700"><span>${out.length} holdings</span><span class="n ${tot === 10000 ? "up" : "down"}">${F.bps(tot)}</span></div>
           ${missing.length ? `<p class="tiny" style="color:var(--down)">No live price found for ${esc(missing.join(", "))}. Check those tickers.</p>` : ""}
-          ${tot !== 10000 && tot > 0 ? `<button class="btn small soft" id="plscale" style="margin-top:8px;width:100%">Scale to 100%</button>` : ""}
+          ${tot < 10000 && tot > 0 ? `<div class="grid2" style="margin-top:8px"><button class="btn small soft" id="plcash">Rest in cash (${F.bps(10000 - tot)})</button><button class="btn small soft" id="plscale">Scale to 100%</button></div>`
+            : tot !== 10000 && tot > 0 ? `<button class="btn small soft" id="plscale" style="margin-top:8px;width:100%">Scale to 100%</button>` : ""}
           <button class="btn primary" id="pluse" style="margin-top:10px">Use these ${out.length}</button></div>`);
+        const pc = $("#plcash", s); if (pc) pc.onclick = () => { const left = 10000 - tot; const c = out.find((x) => x.cash); if (c) c.w += left; else out.push({ t: "CASH", n: "Cash", w: left, cash: true, found: true }); show(); };
         const sc = $("#plscale", s); if (sc) sc.onclick = () => { const k = 10000 / tot; out.forEach((x) => x.w = Math.round(x.w * k)); const d = 10000 - out.reduce((a, x) => a + x.w, 0); out[0].w += d; show(); };
         $("#pluse", s).onclick = () => { const clean = out.map(({ t, n, w, cash }) => ({ t, n, w, cash }));
           if ($("#plrep", s).checked) H = clean; else for (const x of clean) { const e = H.find((h) => h.t === x.t); if (e) e.w = x.w; else H.push(x); }
@@ -733,7 +743,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 6;
+const APP_VERSION = 7;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {
