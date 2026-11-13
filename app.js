@@ -204,19 +204,27 @@ async function vCalc(id) {
   $("#calc").onclick = run; $("#amt").onkeydown = (e) => { if (e.key === "Enter") run(); };
 }
 
-/** Forgiving list reader: "AAPL 9%", "MSFT, 8.5", "8% NVDA", "1. GOOGL – 5%", tab-separated rows, or just "AAPL MSFT NVDA". */
+/** Forgiving list reader: "AAPL 9%", "MSFT, 8.5", "8% NVDA", "1. GOOGL – 5%", spreadsheet rows, "AAPL MSFT NVDA",
+ *  and pastes where iPhone joins the lines with hidden separators instead of normal line breaks. */
 function parseList(text) {
-  const out = []; const seen = new Set(); const STOP = new Set(["THE", "AND", "INC", "CORP", "CO", "LTD", "ETF", "FUND", "TOTAL", "CASH", "USD", "PCT", "NAME", "TICKER", "SYMBOL", "WEIGHT", "TARGET", "SHARES", "PRICE", "VALUE", "CLASS", "A", "B", "C"]);
-  const lines = text.split(/\n|;/).map((l) => l.trim()).filter(Boolean);
-  const single = lines.length === 1 && !/\d/.test(lines[0]);
-  for (const line of single ? lines[0].split(/[\s,]+/) : lines) {
-    const ln = line.replace(/^\s*\d+[.)]\s+/, "");
-    const toks = ln.replace(/[()\[\]|•·–—]/g, " ").split(/[\s,\t:]+/).filter(Boolean);
-    const t = toks.map((x) => x.replace(/^\$/, "")).find((x) => /^[A-Z][A-Z0-9]{0,5}([.\-][A-Z])?$/.test(x) && !STOP.has(x));
-    if (!t || seen.has(t)) continue;
-    const rest = ln.replace(t, " ");
-    const num = (rest.match(/(\d+(?:\.\d+)?)\s*%/) || rest.match(/(\d+(?:\.\d+)?)/) || [])[1];
-    seen.add(t); out.push({ t, n: "", w: num !== undefined && Number(num) <= 100 ? Number(num) : null });
+  const STOP = new Set(["THE", "AND", "INC", "CORP", "CO", "LTD", "ETF", "FUND", "TOTAL", "CASH", "USD", "PCT", "NAME", "TICKER", "SYMBOL", "WEIGHT", "TARGET", "SHARES", "PRICE", "VALUE", "CLASS", "MY", "IS", "OF"]);
+  const TK = /^\$?([A-Z][A-Z0-9]{0,5}(?:[.\-][A-Z])?)$/;
+  const out = [], seen = new Set();
+  const lines = String(text).replace(/\r\n?|\u2028|\u2029|\u0085|\v|\f/g, "\n").split(/\n|;/).map((l) => l.replace(/^\s*\d+[.)]\s+/, "").trim()).filter(Boolean);
+  for (const line of lines) {
+    const toks = line.replace(/[()\[\]|•·–—]/g, " ").split(/[\s,\t:]+/).filter(Boolean);
+    const tick = toks.map((x, k) => ({ k, m: x.match(TK) })).filter((x) => x.m && !STOP.has(x.m[1]));
+    const isNum = (x) => /^\d+(?:\.\d+)?%?$/.test(x || "");
+    const val = (x) => Number(String(x).replace("%", ""));
+    if (tick.length === 1) {               // one holding on the line: take a % number if there is one, else any number
+      const t = tick[0].m[1]; if (seen.has(t)) continue;
+      const nums = toks.filter((x, k) => k !== tick[0].k && isNum(x));
+      const pick = nums.find((x) => x.endsWith("%")) ?? nums[0];
+      seen.add(t); out.push({ t, n: "", w: pick !== undefined && val(pick) <= 100 ? val(pick) : null });
+    } else {                               // several on one line: pair each ticker with the number right after it
+      for (const { k, m } of tick) { const t = m[1]; if (seen.has(t)) continue;
+        const nx = toks[k + 1]; seen.add(t); out.push({ t, n: "", w: isNum(nx) && val(nx) <= 100 ? val(nx) : null }); }
+    }
   }
   return out;
 }
@@ -255,7 +263,8 @@ async function vManager(id) {
       $("#plok", s).onclick = async () => {
         const text = $("#pl", s).value; if (!text.trim()) return toast("Paste your list first.");
         let rows = parseList(text);
-        const messy = text.split(/\n/).filter((l) => l.trim()).length > rows.length + 1 || /[a-z]{4,}/.test(text);
+        const tickerish = (text.match(/\b[A-Z][A-Z0-9]{0,5}\b/g) || []).length;
+        const messy = /[a-z]{4,}/.test(text) || tickerish > rows.length + 2;
         if (!rows.length || messy) {
           $("#plok", s).disabled = true; fill("#plout", spinner("Reading your list"));
           try { const r = await api("/models/parse", { body: { text } }); if (r.length) rows = r.map((x) => ({ t: x.t, n: x.n, w: x.w, cash: x.cash, found: x.found })); }
