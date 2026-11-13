@@ -327,6 +327,7 @@ async function tickInner() {
   }
   if (n.mins >= 975 && !dd.done.includes("settle")) { dd.done.push("settle"); await kvSet("daily_done", dd); await step("settle", O.settleExpired); }
   if (n.mins >= 1025 && tradingDay() && !dd.done.includes("perf")) { dd.done.push("perf"); await kvSet("daily_done", dd); await step("perf", P.lockAll); }
+  if (Date.now() - t0 < 60000) await step("fund", P.fillFundamentals);
   await kvSet("last_tick", { at: new Date().toISOString(), ms: Date.now() - t0, out });
   return out;
 }

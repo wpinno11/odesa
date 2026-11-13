@@ -234,12 +234,13 @@ export async function fundamentals(tickers: string[], wait = false) {
         epsg: n0(x.eps_growth_4q), iv: n0(x.iv30d), rv: n0(x.realized_volatility), hi: n0(x.week_52_high), lo: n0(x.week_52_low), close: n0(x.close), y1: n0(x.one_year_perc),
         ytd: n0(x.ytd_perc), next_er: x.next_earnings_date ?? null, etf: x.issue_type ? !/common/i.test(String(x.issue_type)) : false, name: x.full_name ?? null };
       await sql`insert into odesa.fundamentals(t, uw, uw_at) values (${t}, ${sql.json(v)}, now()) on conflict (t) do update set uw = excluded.uw, uw_at = now()`; cur[t] = { ...(cur[t] ?? {}), t, uw: v }; } } catch (_) { /* keep cached */ } }
-  const needRO = tks.filter((t) => old(cur[t]?.roic_at, 24 * 7) && !cur[t]?.uw?.etf);
-  await pool(needRO, 3, async (t) => { try { const q = await ROIC.perShare(t);
+  const needRO = tks.filter((t) => old(cur[t]?.roic_at, 24 * 7) && !cur[t]?.uw?.etf).slice(0, wait ? 50 : 3);
+  await pool(needRO, 1, async (t) => { try { const q = await ROIC.perShare(t);
     const v = q.length >= 4 ? { eps: q.slice(0, 4).reduce((s: number, x: any) => s + (n0(x.diluted_eps) ?? n0(x.eps) ?? 0), 0), rev: q.slice(0, 4).reduce((s: number, x: any) => s + (n0(x.revenue_per_sh) ?? 0), 0), asof: q[0].date }
       : { eps: null, rev: null, asof: null };
     await sql`insert into odesa.fundamentals(t, roic, roic_at) values (${t}, ${sql.json(v)}, now()) on conflict (t) do update set roic = excluded.roic, roic_at = now()`; cur[t] = { ...(cur[t] ?? {}), t, roic: v };
-  } catch (_) { await sql`insert into odesa.fundamentals(t, roic, roic_at) values (${t}, ${sql.json({ eps: null })}, now()) on conflict (t) do update set roic_at = now()`; } });
+  } catch (e) { // a 404 means ROIC doesn't cover it (check again in a week); anything else is retried on the next pass
+    if ((e as any)?.status === 404) await sql`insert into odesa.fundamentals(t, roic, roic_at) values (${t}, ${sql.json({ eps: null })}, now()) on conflict (t) do update set roic_at = now()`; } });
   const needFwd = tks.filter((t) => old(cur[t]?.fwd_at, 24 * 7));
   let fwd_pending = false;
   if (needFwd.length) { if (wait) await refreshForward(needFwd); else { fwd_pending = true; bg(refreshForward(needFwd)); } }
@@ -283,6 +284,8 @@ export async function statsFor(h: H[], label: string, wait = false) {
   const tot = h.reduce((s, x) => s + x.w, 0) || 1;
   const wavg = (k: string, inclCash = false) => { let s = 0, w = 0; for (const p of per) { const v = (p as any)[k]; if ((p.cash && !inclCash) || v === null || v === undefined) continue; s += p.w * v; w += p.w; } return w ? { v: s / w, cover: w / tot } : { v: null, cover: 0 }; };
   // P/E style ratios are averaged as earnings yields (the standard way), so one huge P/E can't swamp the result
+  const wmed = (k: string) => { const xs = per.filter((p) => !p.cash && (p as any)[k] !== null && (p as any)[k] !== undefined).map((p) => [(p as any)[k], p.w] as [number, number]).sort((a, b) => a[0] - b[0]);
+    const W = xs.reduce((s, x) => s + x[1], 0); let c = 0; for (const [v, w] of xs) { c += w; if (c >= W / 2) return { v, cover: W / tot }; } return { v: null, cover: 0 }; };
   const hmean = (k: string) => { let s = 0, w = 0, neg = 0; for (const p of per) { const v = (p as any)[k]; if (p.cash || v === null || v === 0) continue; s += p.w / v; w += p.w; if (v < 0) neg += p.w; }
     const ey = w ? s / w : null; return { v: ey && ey > 0 ? 1 / ey : null, cover: w / tot, neg: neg / tot }; };
   const group = (k: "sector" | "size") => { const m: Record<string, number> = {}; for (const p of per) m[p[k]] = (m[p[k]] ?? 0) + p.w; return Object.entries(m).map(([name, w]) => ({ name, w })).sort((a, b) => b.w - a.w); };
@@ -294,7 +297,7 @@ export async function statsFor(h: H[], label: string, wait = false) {
   const risk = riskFrom(rets, spy.length === rets.length ? spy : [], rf);
   return {
     label, as_of: new Date().toISOString(), fwd_pending: (f as any).fwd_pending ?? false,
-    valuation: { pe: hmean("pe"), fpe: hmean("fpe"), ps: hmean("ps"), dy: wavg("dy", true), epsg: wavg("epsg"), off_hi: wavg("off_hi") },
+    valuation: { pe: hmean("pe"), fpe: hmean("fpe"), ps: hmean("ps"), dy: wavg("dy", true), epsg: wmed("epsg"), off_hi: wavg("off_hi") },
     mix: { sectors: group("sector"), sizes: group("size"), cash: per.filter((p) => p.cash).reduce((s, p) => s + p.w, 0) / tot, n: per.length,
       top5: sorted.slice(0, 5).reduce((s, p) => s + p.w, 0) / tot, eff_n: 1 / per.reduce((s, p) => s + (p.w / tot) ** 2, 0), mcap: wavg("mcap") },
     risk: { ...(risk ?? {}), beta_w: wavg("beta", true).v, iv: wavg("iv").v, short: wavg("short").v, rf, notes: hy.notes },
@@ -309,6 +312,13 @@ export async function stats(modelId: number, vs: string) {
   return { a, b };
 }
 
+/** Runs on every scheduler tick: fills in missing fundamentals a few at a time (ROIC limits how fast we can ask). */
+export async function fillFundamentals() {
+  const tks = [...new Set((await sql`select holdings from odesa.models`).flatMap((m: any) => nonCash(m.holdings ?? [])))];
+  const fresh = new Set((await sql`select t from odesa.fundamentals where roic_at > now() - interval '7 days' and uw_at > now() - interval '20 hours' and fwd_at > now() - interval '7 days'`).map((r: any) => r.t));
+  const todo = tks.filter((t) => !fresh.has(t)); if (!todo.length) return { ok: "all fresh" };
+  await fundamentals(todo, false); return { checked: todo.length };
+}
 /** Called by the daily schedule after 5 pm: lock today's value for every model. */
 export async function lockAll() {
   const ms = await sql`select id from odesa.models`; const out: Record<string, unknown> = {};

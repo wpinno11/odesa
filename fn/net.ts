@@ -1,5 +1,5 @@
 // One door for every outside call: timeout, one retry on 429/5xx, usage tracking, friendly errors.
-import { usage } from "./db.ts";
+import { usage, sql } from "./db.ts";
 
 export class SourceError extends Error {
   constructor(public source: string, msg: string, public status?: number) { super(`${source}: ${msg}`); }
@@ -34,6 +34,36 @@ export async function call(source: string, url: string, init: RequestInit & { ti
     const text = await res.text();
     await usage(source, true, cost);
     try { return text ? JSON.parse(text) : null; } catch { throw new SourceError(source, "response was not JSON"); }
+  }
+}
+
+/** Same as call(), but the request leaves from the database server. Used for MarketData, whose plan allows only one
+ *  internet address at a time; edge servers change address from request to request, the database doesn't. */
+export async function callFixed(source: string, url: string, headers: Record<string, string>, timeoutMs = 20000): Promise<any> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const [{ id }] = await sql`select net.http_get(url => ${url}, headers => ${sql.json(headers)}, timeout_milliseconds => ${timeoutMs}) id`;
+    const t0 = Date.now(); let r: any = null;
+    while (Date.now() - t0 < timeoutMs + 8000) {
+      await new Promise((ok) => setTimeout(ok, Date.now() - t0 < 2000 ? 120 : 350));
+      const x = await sql`select status_code, content, timed_out, error_msg from net._http_response where id = ${id}`;
+      if (x.length) { r = x[0]; break; }
+    }
+    if (!r || r.timed_out || r.error_msg) {
+      await usage(source, false, 0, r?.error_msg ?? "timeout");
+      if (attempt === 0) continue; throw new SourceError(source, "network error (timeout)");
+    }
+    const st = Number(r.status_code), text = String(r.content ?? "");
+    if ([429, 500, 502, 503, 504].includes(st) && attempt === 0) { await usage(source, false, 0, `HTTP ${st}`); await new Promise((ok) => setTimeout(ok, 2000)); continue; }
+    let j: any = null; try { j = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+    if (st === 404 && j && j.s === "no_data") { await usage(source, true); return j; }
+    if (st >= 400) {
+      const blocked = st === 403 && /one device|IP address has changed/i.test(text);
+      await usage(source, false, 0, blocked ? "paused: address changed" : `HTTP ${st}`);
+      throw new SourceError(source, blocked ? "paused for 5 minutes (address changed); live prices resume shortly" : `HTTP ${st} (${HINT[st] ?? "error"})`, st);
+    }
+    await usage(source, true);
+    if (j === null && text) throw new SourceError(source, "response was not JSON");
+    return j;
   }
 }
 
