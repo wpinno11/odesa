@@ -123,7 +123,7 @@ const XAI = (body: any) => sql`select net.http_post(url := 'https://api.x.ai/v1/
   timeout_milliseconds := 240000) as id`;
 
 // Deferred Grok job: xAI holds the work and we pick it up later, so nothing waits on an open connection (no time limit, no shared queue).
-async function deferredSubmit(body: any): Promise<string> {
+export async function deferredSubmit(body: any): Promise<string> {
   const k = await (await import("./db.ts")).key("XAI_API_KEY");
   const r = await fetch("https://api.x.ai/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${k}`, "Content-Type": "application/json" },
     body: JSON.stringify({ ...body, deferred: true }), signal: AbortSignal.timeout(30000) });
@@ -131,7 +131,7 @@ async function deferredSubmit(body: any): Promise<string> {
   if (!r.ok || !j?.request_id) throw new Error(`Grok wouldn't start the breakdown (${r.status})`);
   return j.request_id;
 }
-async function deferredPoll(id: string): Promise<{ status_code: number; content: string } | null> {
+export async function deferredPoll(id: string): Promise<{ status_code: number; content: string } | null> {
   const k = await (await import("./db.ts")).key("XAI_API_KEY");
   const r = await fetch(`https://api.x.ai/v1/chat/deferred-completion/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${k}` }, signal: AbortSignal.timeout(20000) }).catch(() => null);
   if (!r || r.status === 202) return null;

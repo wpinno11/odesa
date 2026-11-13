@@ -2,6 +2,7 @@
 // The Grok call runs inside the database (pg_net) so it can take a few minutes without hitting the function's time limit.
 import { sql, kvGet, monthCost } from "./db.ts";
 import { MD, GROK_DEEP, parseJson } from "./feeds.ts";
+import { deferredSubmit, deferredPoll } from "./calls.ts";
 import { overlap } from "./signals.ts";
 
 const SHAPE = `{
@@ -12,7 +13,7 @@ const SHAPE = `{
 "pattern": {"summary": "what the places/companies involved have in common", "big": {"value": "", "label": ""},
             "places": [{"name": "", "detail": "", "value": ""}], "traits": [{"trait": "", "strength": 0-100, "evidence": ""}]},
 "levels": [{"level": 1, "title": "who is hit directly", "big": {"value": "", "label": ""},
-            "items": [{"ticker": "", "name": "", "cap": "small|mid|large", "impact": "up|down", "why": "<=20 words", "number": "the key figure"}]},
+            "items": [{"ticker": "", "name": "", "cap": "small|mid|large", "impact": "up|down", "why": "cause -> effect, <=18 plain words", "number": "the key figure, <=12 characters (e.g. -14%, $2.1B, 40% of sales)"}]},
            {"level": 2, "title": "what that causes", "big": {}, "items": []},
            {"level": 3, "title": "who relied on it / who wins", "big": {}, "items": []}],
 "branches": [{"name": "branch name", "chain": ["step", "step", "step"], "tickers": [""]}],
@@ -36,7 +37,9 @@ Rules:
 6. Fill all seven ladder rungs, obvious to hidden: headliners, suppliers, side effects (places and other parties that gain from the shift), under-the-radar small caps,
    sneaky derivatives (supplier of the supplier, ETFs with hidden weight, pairs, option structures), long shots, and down-the-road ideas tied to a warning sign.
    Include at least one at-risk name (short, put or avoid) where it exists.
-7. Every figure must come from a source you found; put the date. If you estimate, say "est." in the value. Never invent tickers. Short words, no long paragraphs.
+7. Every figure must come from a source you found; put the date. If you estimate, say "est." in the value. Never invent tickers.
+8. Write for a smart reader seeing this for the first time. Plain everyday words; no jargon or acronyms unless explained in a few words.
+   Every "why" reads as cause -> effect ("Loses its biggest buyer, so sales drop"). Big numbers stay short (under 12 characters). No long paragraphs.
 These are research ideas for a professional to evaluate, not personal advice.`;
 
 export async function start(question: string) {
@@ -78,6 +81,7 @@ export async function get(id: number) {
       return { ...run, status: "error", error: "Opal could not finish. Try again." }; }
     return { id, status: "running", question: run.question, created_at: run.created_at };
   }
+  if (run.status === "done") return await explainStep(run);
   if (run.status !== "running") return run;
   const reqId = run.result?.req_id;
   const [resp] = reqId ? await sql`select status_code, content, error_msg, timed_out from net._http_response where id = ${reqId}` : [];
@@ -116,7 +120,88 @@ export async function get(id: number) {
   } catch { r.tickers = r.tickers ?? {}; }
   const [done] = await sql`update odesa.opal_runs set status = 'done', result = ${sql.json(r)}, cost = ${cost}, title = ${String(r.title ?? run.question).slice(0, 120)}, finished_at = now()
     where id = ${id} returning *`;
-  return done;
+  return await explainStep(done);
+}
+
+// ---------------------------------------------------------------- Step 2: the plain-language story + deeper trades
+// Runs as a deferred Grok job (no time limit, no shared queue) after the main run is done, and also upgrades older runs when opened.
+const EXPLAIN_SYS = `You turn an Opal research run into a simple, logical explanation for a smart reader who is seeing it for the first time, and you dig deeper for trades.
+Rules:
+- Plain everyday words. No jargon. If a term is unavoidable, explain it in a few words in brackets.
+- Every explanation is a chain: "This happens, so this follows, so this follows." Each step at most 14 words.
+- Use the facts and numbers in the run. Do not invent new facts. If you estimate, write "est." in the number.
+- Big numbers are short (under 12 characters).
+- deep_cuts: 6 trade ideas that most people would miss, NOT already in the run's ladder. Go at least three steps away from the news:
+  suppliers of suppliers, customers of customers, substitutes, places that gain, lenders, insurers, landlords, raw materials, ETFs with hidden weight, pairs.
+  Use only real US-listed tickers you are sure of. Include at least one at-risk name (short, put or avoid) if one exists.
+Answer ONLY with JSON:
+{"story": {"one_line": "the whole thing in one sentence, <=25 words",
+           "steps": [{"text": "<=14 words", "number": {"value": "", "label": "<=6 words"}}]},
+ "sections": {"check": "1-2 sentences: is it true and how sure", "pattern": "1-2 sentences: what the places/companies have in common and why it matters",
+              "levels": ["one sentence per level: Because ..., these companies ..."], "branches": ["one sentence per branch"],
+              "next": ["one sentence per direction: If ..., then ..., so ..."], "board": "1-2 sentences: who wins, who loses, why"},
+ "items": {"TICKER": "<=18 words: why this name, as cause -> effect"},
+ "deep_cuts": [{"ticker": "", "name": "", "cap": "small|mid|large", "direction": "long|short|avoid", "how": "shares|call|put|put sale|pair|spread",
+                "timing": "now|weeks|months", "chain": ["the news", "so ...", "so ...", "so this company ..."], "why_hidden": "why most people miss it, <=16 words",
+                "watch": "the sign it is working, <=12 words", "kills_it": "<=12 words", "confidence": 0-100}]}
+story.steps: 4 to 6 steps, starting with the news and ending with where the money moves. Give a number on a step only when the run has one.
+These are research ideas for a professional to evaluate, not personal advice.`;
+
+async function moves(r: any) {
+  const tks: string[] = [];
+  for (const l of r.levels ?? []) for (const i of l.items ?? []) { const t = String(i.ticker ?? "").toUpperCase(); if (r.tickers?.[t]?.verified && !tks.includes(t)) tks.push(t); }
+  const out: Record<string, any> = {};
+  for (const t of tks.slice(0, 15)) {
+    try { const c = await MD.candles(t, 23); if (c.length < 2) continue; const cl = c.map((x: any) => x.c);
+      out[t] = { closes: cl.map((x: number) => Math.round(x * 100) / 100), days: c.map((x: any) => new Date(x.t * 1000).toISOString().slice(5, 10)),
+        chg1m: cl[cl.length - 1] / cl[0] - 1, chg5: cl.length > 5 ? cl[cl.length - 1] / cl[cl.length - 6] - 1 : null }; } catch { /* skip */ }
+  }
+  return out;
+}
+
+async function explainStep(run: any) {
+  const r = run.result ?? {}; const id = run.id;
+  if (!r.explain || (r.explain.status === "starting" && Date.now() - Date.parse(r.explain.started) > 180000)) {
+    if (Date.now() - new Date(run.created_at).getTime() > 45 * 86400000) return run;
+    const cap = Number((await kvGet<any>("settings", {})).grok_cap_usd ?? 300); if ((await monthCost("grok")) + 0.5 > cap) return run;
+    const claim = await sql`update odesa.opal_runs set result = jsonb_set(result, '{explain}', jsonb_build_object('status', 'starting', 'started', now())) where id = ${id} and status = 'done'
+      and (not (result ? 'explain') or (result->'explain'->>'status' = 'starting' and (result->'explain'->>'started')::timestamptz < now() - interval '3 minutes')) returning id`;
+    if (!claim.length) return run;
+    try {
+      const slim = { ...r }; delete slim.tickers; delete slim.citations; delete slim.sources; delete slim.moves; delete slim.explain;
+      const req = await deferredSubmit({ model: GROK_DEEP, messages: [{ role: "system", content: EXPLAIN_SYS }, { role: "user", content: `News: "${run.question}"\nThe run:\n${JSON.stringify(slim)}` }] });
+      const mv = r.moves ?? await moves(r);
+      const ex = { status: "running", req, started: new Date().toISOString() };
+      const [u] = await sql`update odesa.opal_runs set result = result || ${sql.json({ explain: ex, moves: mv } as never)} where id = ${id} returning *`; return u;
+    } catch (e) {
+      const [u] = await sql`update odesa.opal_runs set result = result || ${sql.json({ explain: { status: "error", error: String((e as Error).message).slice(0, 120) } } as never)} where id = ${id} returning *`; return u;
+    }
+  }
+  if (r.explain.status !== "running") return run;
+  const resp = await deferredPoll(r.explain.req);
+  if (!resp) {
+    if (Date.now() - Date.parse(r.explain.started) > 15 * 60000) {
+      const [u] = await sql`update odesa.opal_runs set result = jsonb_set(result, '{explain}', '{"status":"error","error":"took too long"}') where id = ${id} returning *`; return u; }
+    return run;
+  }
+  const claim = await sql`update odesa.opal_runs set result = jsonb_set(result, '{explain,status}', '"parsing"') where id = ${id} and result->'explain'->>'status' = 'running' returning id`;
+  if (!claim.length) return run;
+  let ex: any = null, cost = 0;
+  try { const j = JSON.parse(resp.content); cost = Number(j?.usage?.cost_in_usd_ticks ?? 0) / 1e10; ex = parseJson(j?.choices?.[0]?.message?.content ?? ""); } catch { /* below */ }
+  if (cost) await sql`insert into odesa.feed_usage(day, source, calls, cost, last_ok) values (current_date, 'grok', 1, ${cost}, now())
+    on conflict (day, source) do update set calls = odesa.feed_usage.calls + 1, cost = odesa.feed_usage.cost + ${cost}, last_ok = now()`;
+  if (!ex || typeof ex !== "object") {
+    const [u] = await sql`update odesa.opal_runs set result = jsonb_set(result, '{explain}', '{"status":"error","error":"unreadable"}') where id = ${id} returning *`; return u; }
+  // keep only real tickers in the deeper ideas, and price them
+  const cuts = Array.isArray(ex.deep_cuts) ? ex.deep_cuts : [];
+  const tks = [...new Set(cuts.map((c: any) => String(c.ticker ?? "").toUpperCase().replace(/^\$/, "")).filter((t: string) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(t)))] as string[];
+  let q: Record<string, any> = {}; try { q = tks.length ? await MD.quotes(tks) : {}; } catch { /* unpriced */ }
+  ex.deep_cuts = cuts.filter((c: any) => q[String(c.ticker ?? "").toUpperCase().replace(/^\$/, "")]).map((c: any) => ({ ...c, ticker: String(c.ticker).toUpperCase().replace(/^\$/, "") }));
+  const tick = { ...(r.tickers ?? {}) };
+  for (const c of ex.deep_cuts) tick[c.ticker] ??= { price: q[c.ticker]?.last ?? null, changepct: q[c.ticker]?.changepct ?? null, verified: true, logo: `https://storage.googleapis.com/uwassets/logos-v2/${c.ticker}.png`, signals: null };
+  const [u] = await sql`update odesa.opal_runs set result = result || ${sql.json({ explain: { ...ex, status: "done", cost }, tickers: tick } as never)}, cost = coalesce(cost, 0) + ${cost}
+    where id = ${id} returning *`;
+  return u;
 }
 
 export async function list(saved?: boolean) {
