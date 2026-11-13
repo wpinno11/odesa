@@ -157,7 +157,7 @@ export async function profile(t: string) {
   return {
     ticker: t, kind: isFund ? "fund" : "stock", name: S.name || info?.full_name || u.name || t, about: S.about ?? null, logo: info?.logo ?? null,
     sector: isFund ? (S.fund?.asset_class ?? "Fund") : (u.sector ?? info?.sector ?? null), industry: u.industry ?? null, mcap: nn(u.mcap) ?? nn(info?.marketcap),
-    quote: qq, last, beta: nn(u.beta) ?? nn(info?.beta), pe: !isFund && ro.eps && last ? last / ro.eps : nn(fw.pe), fpe: nn(fw.fpe), dy: info?.has_dividend === false ? 0 : (nn(u.dy) ?? nn(sc.dividend_yield)),
+    quote: qq, last, beta: nn(u.beta) ?? nn(info?.beta), pe: !isFund && ro.eps && last ? last / ro.eps : nn(fw.pe), fpe: nn(fw.fpe), dy: info?.has_dividend === false ? 0 : (px[0] && px[0][0] > yearsAgo(1) ? null : (nn(u.dy) ?? nn(sc.dividend_yield))),
     short: nn(u.short), next_er: nextEr, range,
     prices: thin(px), spy: thin(spy), returns: { t: R(px), spy: R(spy) }, history_from: px[0]?.[0] ?? null,
     fin: isFund ? null : fin, street: S.at ? S : null, street_pending: st.pending,
