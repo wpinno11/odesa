@@ -133,7 +133,9 @@ export async function ingestCongress() {
     const who = `${t.chamber === "senate" ? "Sen." : "Rep."} ${t.member}`;
     const sold = /sell|sale/i.test(String(t.txn ?? ""));
     const title = `${who} ${sold ? "sold" : "bought"} ${t.amount ?? ""}`.trim();
-    if (await put("C", t.ticker, t.filed ?? t.traded ?? new Date(), title, t, 2, `C:${t.pid}:${t.ticker}:${t.traded}:${t.txn}:${t.amount}`)) { n++; fresh.push({ ...t, who, sold }); }
+    if (await put("C", t.ticker, t.filed ?? t.traded ?? new Date(), title, t, 2, `C:${t.pid}:${t.ticker}:${t.traded}:${t.txn}:${t.amount}`)) n++;
+    // check everything filed in the last 5 days (alerts are de-duplicated, so a re-check never double-alerts)
+    if (Date.parse(t.filed ?? t.traded ?? 0) > Date.now() - 5 * 86400000) fresh.push({ ...t, who, sold });
   }
   return { added: n, alerts: fresh.length ? await congressAlerts(fresh) : 0 };
 }
