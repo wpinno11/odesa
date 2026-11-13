@@ -39,11 +39,14 @@ export async function approve(id: number, b: any) {
     stop_pct: b.stop_pct !== undefined ? b.stop_pct : i.stop_pct ?? (i.action === "sell" ? s.sell_stop_pct : s.stop_pct) });
   const lq = await liveQuote(c);
   if (lq.px === null) throw new Error(lq.why ?? "No live price right now.");
-  const upd = await sql`update odesa.ideas set status = 'approved', decided_at = now() where id = ${id} and status = 'new' returning id`;
-  if (!upd.length) throw new Error("This idea was already handled.");
-  const [p] = await sql`insert into odesa.positions(idea_id, symbol, side, action, strike, expiry, contracts, target_pct, stop_pct, thesis, entry_px, entry_at, entry_quote, entry_underlying, last_px, last_at, last_basis, hi_pct, lo_pct)
-    values (${id}, ${c.symbol}, ${c.side}, ${c.action}, ${c.strike}, ${c.expiry}, ${c.contracts}, ${c.target_pct}, ${c.stop_pct}, ${i.thesis}, ${lq.px}, now(),
-    ${sql.json(lq.q as never)}, ${lq.q?.underlyingPrice ?? null}, ${lq.px}, now(), 'mid', 0, 0) returning *`;
+  const p = await sql.begin(async (tx: any) => {
+    const upd = await tx`update odesa.ideas set status = 'approved', decided_at = now() where id = ${id} and status = 'new' returning id`;
+    if (!upd.length) throw new Error("This idea was already handled.");
+    const [row] = await tx`insert into odesa.positions(idea_id, symbol, side, action, strike, expiry, contracts, target_pct, stop_pct, thesis, entry_px, entry_at, entry_quote, entry_underlying, last_px, last_at, last_basis, hi_pct, lo_pct)
+      values (${id}, ${c.symbol}, ${c.side}, ${c.action}, ${c.strike}, ${c.expiry}, ${c.contracts}, ${c.target_pct}, ${c.stop_pct}, ${i.thesis}, ${lq.px}, now(),
+      ${tx.json(lq.q as never)}, ${lq.q?.underlyingPrice ?? null}, ${lq.px}, now(), 'mid', 0, 0) returning *`;
+    return row;
+  });
   await event("approved", `Tracking ${label(p as any)}`, `Entry $${lq.px} (live mid)`, { position_id: p.id });
   return row(p);
 }

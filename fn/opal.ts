@@ -1,6 +1,6 @@
 // Opal: one sentence of news -> checked, patterned, three levels deep, three directions, then-what, thrive/danger and a seven-rung trade ladder.
 // The Grok call runs inside the database (pg_net) so it can take a few minutes without hitting the function's time limit.
-import { sql } from "./db.ts";
+import { sql, kvGet, monthCost } from "./db.ts";
 import { MD, GROK_DEEP, parseJson } from "./feeds.ts";
 import { overlap } from "./signals.ts";
 
@@ -42,6 +42,9 @@ These are research ideas for a professional to evaluate, not personal advice.`;
 export async function start(question: string) {
   const q = question.replace(/\s+/g, " ").trim().slice(0, 500);
   if (q.length < 6) throw new Error("Type a sentence about the news first.");
+  const cap = Number((await kvGet<any>("settings", {})).grok_cap_usd ?? 300), spent = await monthCost("grok");
+  const pending = await sql`select count(*)::int n from odesa.opal_runs where status in ('running', 'parsing')`;
+  if (spent + 1.5 * pending[0].n + 1.5 > cap) throw new Error(`Grok monthly cap would be passed ($${spent.toFixed(2)} of $${cap} used). Raise it in Settings.`);
   const holdings = (await sql`select name, holdings from odesa.models`).map((m: any) => `${m.name}: ${(m.holdings ?? []).map((h: any) => h.t).join(", ")}`).join("; ");
   const hot = (await overlap(7, 12)).filter((o) => o.count >= 2).map((o) => `${o.ticker} (${o.srcs.join("")})`).join(", ");
   const today = new Date().toISOString().slice(0, 10);
@@ -69,40 +72,48 @@ function tickersIn(r: any): string[] {
 export async function get(id: number) {
   const [run] = await sql`select * from odesa.opal_runs where id = ${id}`;
   if (!run) throw new Error("Not found.");
+  const age = Date.now() - new Date(run.created_at).getTime();
+  if (run.status === "parsing") {
+    if (age > 10 * 60000) { await sql`update odesa.opal_runs set status = 'error', error = 'Opal could not finish. Try again.', finished_at = now() where id = ${id} and status = 'parsing'`;
+      return { ...run, status: "error", error: "Opal could not finish. Try again." }; }
+    return { id, status: "running", question: run.question, created_at: run.created_at };
+  }
   if (run.status !== "running") return run;
   const reqId = run.result?.req_id;
   const [resp] = reqId ? await sql`select status_code, content, error_msg, timed_out from net._http_response where id = ${reqId}` : [];
   if (!resp) {
-    if (Date.now() - new Date(run.created_at).getTime() > 7 * 60000) {
-      await sql`update odesa.opal_runs set status = 'error', error = 'Opal took too long. Try again.', finished_at = now() where id = ${id}`;
+    if (age > 7 * 60000) {
+      await sql`update odesa.opal_runs set status = 'error', error = 'Opal took too long. Try again.', finished_at = now() where id = ${id} and status = 'running'`;
       return { ...run, status: "error", error: "Opal took too long. Try again." };
     }
     return { id, status: "running", question: run.question, created_at: run.created_at };
   }
-  if (resp.status_code !== 200) {
-    const err = resp.timed_out ? "Opal timed out. Try again." : `Grok error ${resp.status_code ?? ""} ${String(resp.error_msg ?? "").slice(0, 80)}`.trim();
-    await sql`update odesa.opal_runs set status = 'error', error = ${err}, finished_at = now() where id = ${id}`;
+  // claim the run so two polls never process (or bill) it twice
+  const claimed = await sql`update odesa.opal_runs set status = 'parsing' where id = ${id} and status = 'running' returning id`;
+  if (!claimed.length) return { id, status: "running", question: run.question, created_at: run.created_at };
+  const fail = async (err: string, cost = 0) => {
+    await sql`update odesa.opal_runs set status = 'error', error = ${err}, cost = ${cost}, finished_at = now() where id = ${id}`;
     return { ...run, status: "error", error: err };
-  }
-  const j = JSON.parse(resp.content);
+  };
+  if (resp.status_code !== 200) return fail(resp.timed_out ? "Opal timed out. Try again." : `Grok error ${resp.status_code ?? ""} ${String(resp.error_msg ?? "").slice(0, 80)}`.trim());
+  let j: any; try { j = JSON.parse(resp.content); } catch { return fail("Grok's reply was cut off. Try again."); }
   const cost = Number(j?.usage?.cost_in_usd_ticks ?? 0) / 1e10;
-  let text = "", cites: any[] = [];
-  for (const it of j.output ?? []) if (it.type === "message") for (const p of it.content ?? []) { text += p.text ?? ""; for (const a of p.annotations ?? []) if (a.url) cites.push({ url: a.url, title: a.title }); }
-  const r = parseJson(text);
   await sql`insert into odesa.feed_usage(day, source, calls, cost, last_ok) values (current_date, 'grok', 1, ${cost}, now())
     on conflict (day, source) do update set calls = odesa.feed_usage.calls + 1, cost = odesa.feed_usage.cost + ${cost}, last_ok = now()`;
-  if (!r || typeof r !== "object") {
-    await sql`update odesa.opal_runs set status = 'error', error = 'Opal returned something unreadable. Try again.', cost = ${cost}, finished_at = now() where id = ${id}`;
-    return { id, status: "error", error: "Opal returned something unreadable. Try again." };
-  }
-  // enrich: live price for every ticker named, and whether Signals already flags it
-  const tks = tickersIn(r).slice(0, 80);
-  let quotes: Record<string, any> = {};
-  try { quotes = await MD.quotes(tks); } catch { /* prices are a bonus */ }
-  const ov = Object.fromEntries((await overlap(14, 200)).map((o) => [o.ticker, { srcs: o.srcs, score: o.score }]));
-  r.tickers = Object.fromEntries(tks.map((t) => [t, { price: quotes[t]?.last ?? null, changepct: quotes[t]?.changepct ?? null, verified: !!quotes[t],
-    logo: `https://storage.googleapis.com/uwassets/logos-v2/${t}.png`, signals: ov[t] ?? null }]));
-  r.citations = cites.filter((c, i) => cites.findIndex((x) => x.url === c.url) === i).slice(0, 30);
+  let text = ""; const cites: any[] = [];
+  for (const it of j.output ?? []) if (it.type === "message") for (const p of it.content ?? []) { text += p.text ?? ""; for (const a of p.annotations ?? []) if (a.url) cites.push({ url: a.url, title: a.title }); }
+  const r = parseJson(text);
+  if (!r || typeof r !== "object" || Array.isArray(r)) return fail("Opal returned something unreadable. Try again.", cost);
+  try {
+    // enrich: live price for every ticker named, and whether Signals already flags it
+    const tks = tickersIn(r).slice(0, 80);
+    let quotes: Record<string, any> = {};
+    try { quotes = await MD.quotes(tks); } catch { /* prices are a bonus */ }
+    const ov = Object.fromEntries((await overlap(14, 200)).map((o) => [o.ticker, { srcs: o.srcs, score: o.score }]));
+    r.tickers = Object.fromEntries(tks.map((t) => [t, { price: quotes[t]?.last ?? null, changepct: quotes[t]?.changepct ?? null, verified: !!quotes[t],
+      logo: `https://storage.googleapis.com/uwassets/logos-v2/${t}.png`, signals: ov[t] ?? null }]));
+    r.citations = cites.filter((c, i) => cites.findIndex((x) => x.url === c.url) === i).slice(0, 30);
+  } catch { r.tickers = r.tickers ?? {}; }
   const [done] = await sql`update odesa.opal_runs set status = 'done', result = ${sql.json(r)}, cost = ${cost}, title = ${String(r.title ?? run.question).slice(0, 120)}, finished_at = now()
     where id = ${id} returning *`;
   return done;

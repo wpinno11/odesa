@@ -5,6 +5,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const app = () => $("#app");
+const safeUrl = (u) => /^https?:\/\//i.test(String(u || "")) ? String(u) : ""; // never render javascript: or other schemes from outside data
 let TOKEN = null; try { TOKEN = localStorage.getItem("odesa_token"); } catch (_) {}
 const MEM = {}; // small in-memory cache per session
 
@@ -341,7 +342,7 @@ async function vOpalRun(id, tab = "check") {
     check: () => { const c = R.check || {}; const col = { confirmed: "var(--up)", partly: "var(--amber)", rumor: "var(--down)", unclear: "var(--gray)" }[c.verdict] || "var(--gray)";
       return `<div class="card"><div class="row between"><span class="pill" style="background:${col};color:#fff;font-size:14px;padding:6px 12px">${esc((c.verdict || "unclear").toUpperCase())}</span><span class="n" style="font-size:22px;font-weight:700">${c.confidence ?? "–"}<span class="small muted">/100</span></span></div>
         <p style="font-size:17px;line-height:1.4">${esc(c.summary)}</p>${big(c.count)}</div>
-        <div class="card pad0">${(c.facts || []).map((f) => `<div class="li" style="cursor:default"><div class="grow1"><div style="font-size:15px">${esc(f.text)}</div><div class="tiny muted">${f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.source || "source")}</a>` : esc(f.source)} ${f.date ? "· " + esc(f.date) : ""}</div></div></div>`).join("")}</div>`; },
+        <div class="card pad0">${(c.facts || []).map((f) => `<div class="li" style="cursor:default"><div class="grow1"><div style="font-size:15px">${esc(f.text)}</div><div class="tiny muted">${safeUrl(f.url) ? `<a href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">${esc(f.source || "source")}</a>` : esc(f.source)} ${f.date ? "· " + esc(f.date) : ""}</div></div></div>`).join("")}</div>`; },
     pattern: () => { const p = R.pattern || {}; return `<div class="card">${big(p.big)}<p style="font-size:16px;line-height:1.45">${esc(p.summary)}</p></div>
         <div class="card"><h2 class="h2">What they share</h2>${(p.traits || []).map((t) => `<div style="margin-top:12px"><div class="row between"><b>${esc(t.trait)}</b><span class="n small">${t.strength}%</span></div>
           <div class="bar" style="margin-top:6px"><i style="width:${Math.max(3, Math.min(100, t.strength))}%;background:${t.strength >= 70 ? "var(--brass)" : "var(--navy)"}"></i></div><div class="small muted" style="margin-top:4px">${esc(t.evidence)}</div></div>`).join("")}</div>
@@ -366,7 +367,7 @@ async function vOpalRun(id, tab = "check") {
           <div style="margin-top:6px;font-size:15px">${esc(i.why)}</div>${i.priced_in ? `<div class="small muted" style="margin-top:4px">Priced in: ${esc(i.priced_in)}</div>` : ""}${i.kills_it ? `<div class="small muted">Kills it: ${esc(i.kills_it)}</div>` : ""}
           ${i.rides ? `<div class="tiny muted" style="margin-top:2px">Rides: ${esc(i.rides)}</div>` : ""}</div><div class="n" style="font-weight:700">${i.confidence ?? ""}</div></div>`).join("")}</div>`).join("") +
         `<p class="tiny muted" style="text-align:center;margin:10px 20px">Research ideas to evaluate, not recommendations. Tap a ticker to research it.</p>`,
-    sources: () => `<div class="card pad0">${[...(R.sources || []), ...(R.citations || [])].filter((s, i, a) => s.url && a.findIndex((x) => x.url === s.url) === i).map((s) => `<a class="li" href="${esc(s.url)}" target="_blank" rel="noopener"><div class="grow1"><div style="font-size:15px">${esc(s.title || s.url)}</div><div class="tiny muted">${esc((s.url.match(/\/\/([^/]+)/) || [])[1] || "")} ${s.date ? "· " + esc(s.date) : ""}</div></div><span class="muted">↗</span></a>`).join("") || `<div class="empty">No sources returned.</div>`}</div>`,
+    sources: () => `<div class="card pad0">${[...(R.sources || []), ...(R.citations || [])].filter((s, i, a) => safeUrl(s.url) && a.findIndex((x) => x.url === s.url) === i).map((s) => `<a class="li" href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener"><div class="grow1"><div style="font-size:15px">${esc(s.title || s.url)}</div><div class="tiny muted">${esc((s.url.match(/\/\/([^/]+)/) || [])[1] || "")} ${s.date ? "· " + esc(s.date) : ""}</div></div><span class="muted">↗</span></a>`).join("") || `<div class="empty">No sources returned.</div>`}</div>`,
   };
   const draw = (t) => { tab = t; fill("#or-body", `<div class="otabs">${OTABS.map(([k, l]) => `<button class="chip ${k === t ? "on" : ""}" data-t="${k}">${l}</button>`).join("")}</div>${body[t]()}`);
     $$("[data-t]").forEach((b) => b.onclick = () => draw(b.dataset.t)); };
@@ -613,7 +614,7 @@ async function vStock(t) {
            ["IV", d.iv && d.iv.iv ? (d.iv.iv * 100).toFixed(0) + "%" : "–"], ["Avg volume", info.avg30_volume ? (Number(info.avg30_volume) / 1e6).toFixed(1) + "M" : "–"], ["Dividend", info.has_dividend ? "Yes" : "No"]]
           .map(([a, b]) => `<div><div class="tiny muted">${a}</div><div class="n" style="font-size:17px;font-weight:700;margin-top:2px">${b}</div></div>`).join("")}</div></div>
       <div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Flags (30 days)</h2></div>${d.signals.length ? d.signals.slice(0, 12).map((s) => `<div class="li" style="cursor:default">${dot(s.src, 24)}<div class="grow1 small">${esc(s.title)}</div><span class="tiny muted">${F.ago(s.ts)}</span></div>`).join("") : `<div class="empty">No flags.</div>`}</div>
-      <div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Filings</h2></div>${d.filings.length ? d.filings.map((f) => `<a class="li" href="${esc(f.url)}" target="_blank" rel="noopener"><span class="pill" style="background:var(--soft)">${esc(f.form)}</span><div class="grow1 small">${esc(f.desc || f.items || "")}</div><span class="tiny muted">${F.date(f.filed)}</span></a>`).join("") : `<div class="empty">None found.</div>`}</div>
+      <div class="card pad0"><div style="padding:12px 0 4px"><h2 class="h2">Filings</h2></div>${d.filings.length ? d.filings.map((f) => `<a class="li" href="${esc(safeUrl(f.url) || "#")}" target="_blank" rel="noopener"><span class="pill" style="background:var(--soft)">${esc(f.form)}</span><div class="grow1 small">${esc(f.desc || f.items || "")}</div><span class="tiny muted">${F.date(f.filed)}</span></a>`).join("") : `<div class="empty">None found.</div>`}</div>
       </div></div>
       <div class="grid2" style="margin:14px 16px 0"><a class="btn primary" href="#options/new">Options idea</a><button class="btn ghost" id="askopal">Ask Opal</button></div>`);
     $("#addw").onclick = async () => { await api("/watchlist", { body: { ticker: t } }); toast("Added to watchlist"); };

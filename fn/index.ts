@@ -28,13 +28,19 @@ async function newSession(device: string) {
   await sql`insert into odesa.sessions(token_hash, device, expires_at) values (${await sha(token)}, ${device.slice(0, 80)}, now() + interval '180 days')`;
   return token;
 }
-async function throttle(ok: boolean) {
-  const f = await kvGet<any>("auth_fail", { n: 0, until: 0 });
-  if (ok) { if (f.n) await kvSet("auth_fail", { n: 0, until: 0 }); return; }
-  f.n += 1; if (f.n >= 5) { f.until = Date.now() + 15 * 60000; f.n = 0; }
-  await kvSet("auth_fail", f);
+/** Count every attempt atomically (per device address and overall) before checking it, so parallel guesses can't slip past the limit. */
+async function allowAttempt(ip: string) {
+  const bump = async (key: string, limit: number) => {
+    const [r] = await sql`insert into odesa.auth_attempts(key, n, window_start) values (${key}, 1, now())
+      on conflict (key) do update set n = case when odesa.auth_attempts.window_start < now() - interval '15 minutes' then 1 else odesa.auth_attempts.n + 1 end,
+        window_start = case when odesa.auth_attempts.window_start < now() - interval '15 minutes' then now() else odesa.auth_attempts.window_start end
+      returning n, window_start`;
+    return { ok: r.n <= limit, mins: Math.max(1, Math.ceil((new Date(r.window_start).getTime() + 15 * 60000 - Date.now()) / 60000)) };
+  };
+  const a = await bump(`ip:${ip}`, 5); if (!a.ok) bad(`Too many tries. Wait ${a.mins} minutes.`, 429);
+  const g = await bump("all", 30); if (!g.ok) bad(`Too many tries. Wait ${g.mins} minutes.`, 429);
 }
-async function locked() { const f = await kvGet<any>("auth_fail", { n: 0, until: 0 }); return f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 60000) : 0; }
+async function attemptOk(ip: string) { await sql`delete from odesa.auth_attempts where key = ${`ip:${ip}`}`; }
 
 async function auth(req: Request) {
   const h = req.headers.get("authorization") ?? ""; const tok = h.startsWith("Bearer ") ? h.slice(7) : "";
@@ -64,13 +70,15 @@ async function route(c: Ctx): Promise<unknown> {
   // ---------------- login (no session needed)
   if (a === "auth") {
     if (b === "status") return { has_passcode: !!(await kvGet<any>("passcode", null)) };
-    if (await locked()) bad(`Too many tries. Wait ${await locked()} minutes.`, 429);
+    const ip = (c.req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim().slice(0, 64) || "unknown";
+    if (b === "setup" || b === "login") await allowAttempt(ip);
     const pass = String(c.body.passcode ?? ""); const device = String(c.body.device ?? "device");
     if (b === "setup" && m === "POST") {
       if (await kvGet<any>("passcode", null)) bad("A passcode is already set. Log in instead.");
       const st = await kvGet<any>("setup", null);
       const ok = st && Date.now() < st.expires && same(await sha(String(c.body.setup_code ?? "").trim().toUpperCase()), st.hash);
-      await throttle(!!ok); if (!ok) bad("That setup code isn't right.", 401);
+      if (!ok) bad("That setup code isn't right.", 401);
+      await attemptOk(ip);
       if (!/^\d{6,12}$/.test(pass)) bad("Pick a passcode of 6 to 12 digits.");
       const salt = hex(crypto.getRandomValues(new Uint8Array(16)).buffer);
       await kvSet("passcode", { salt, hash: await pbkdf2(pass, salt) }); await kvSet("setup", { used: true });
@@ -78,8 +86,9 @@ async function route(c: Ctx): Promise<unknown> {
     }
     if (b === "login" && m === "POST") {
       const p = await kvGet<any>("passcode", null); if (!p) bad("No passcode yet. Use your setup code first.");
-      const ok = same(await pbkdf2(pass, p.salt), p.hash); await throttle(ok);
+      const ok = same(await pbkdf2(pass, p.salt), p.hash);
       if (!ok) bad("Wrong passcode.", 401);
+      await attemptOk(ip);
       return { token: await newSession(device) };
     }
     if (b === "logout" && m === "POST") { const t = (c.req.headers.get("authorization") ?? "").slice(7); await sql`delete from odesa.sessions where token_hash = ${await sha(t)}`; return { ok: true }; }
@@ -266,6 +275,12 @@ async function runJob(job: string) {
   }
 }
 async function tick() {
+  // one tick at a time: claim a 140-second lock atomically, skip if another tick holds it
+  const got = await sql`update odesa.kv set v = to_jsonb(extract(epoch from now())), updated_at = now() where k = 'tick_lock' and (v #>> '{}')::float8 < extract(epoch from now()) - 140 returning k`;
+  if (!got.length) return { skipped: "another run is in progress" };
+  try { return await tickInner(); } finally { await sql`update odesa.kv set v = '0'::jsonb where k = 'tick_lock'`; }
+}
+async function tickInner() {
   const n = etNow(), out: Record<string, unknown> = {}; const t0 = Date.now();
   const step = async (name: string, f: () => Promise<unknown>) => { try { out[name] = await f(); } catch (e) { out[name] = { error: (e as Error).message.slice(0, 160) }; } };
   if (marketOpen()) {
@@ -300,16 +315,16 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (origin && !cors["Access-Control-Allow-Origin"]) return new Response(JSON.stringify({ error: "Not allowed." }), { status: 403 });
   const url = new URL(req.url);
-  const parts = url.pathname.replace(/^\/(functions\/v1\/)?odesa-api\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   let body: any = {};
   if (req.method === "POST") { try { body = await req.json(); } catch { body = {}; } }
   try {
+    const parts = url.pathname.replace(/^\/(functions\/v1\/)?odesa-api\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
     const data = await route({ req, body, q: url.searchParams, parts });
     return new Response(JSON.stringify(data ?? null), { headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" } });
   } catch (e) {
     const status = e instanceof HttpError ? e.status : e instanceof BudgetExceeded ? 402 : e instanceof SourceError ? 502 : 400;
     const msg = (e as Error).message || "Something went wrong.";
-    if (!(e instanceof HttpError)) console.error(parts.join("/"), msg);
+    if (!(e instanceof HttpError)) console.error(url.pathname, msg);
     return new Response(JSON.stringify({ error: msg }), { status, headers: { ...cors, "Content-Type": "application/json" } });
   }
 });
