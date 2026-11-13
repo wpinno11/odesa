@@ -1218,7 +1218,7 @@ function earnSection(d, E, tab) {
     <div class="chips" style="padding:12px 0 0;margin:0 -16px;padding-left:16px">${ETABS.map(([k, l]) => `<button class="chip ${tab === k ? "on" : ""}" data-et="${k}">${l}</button>`).join("")}</div>
     ${body}
     ${notes.length ? `<details style="margin-top:14px;background:var(--amber-l);border-radius:12px;padding:10px 12px"><summary class="small" style="cursor:pointer;font-weight:600">Notes on the data (${notes.length})</summary><ul class="tiny" style="margin:8px 0 0;padding-left:18px;line-height:1.5">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></details>` : ""}
-    <p class="tiny muted" style="margin:12px 0 0;line-height:1.4">From <b>Call Surgeon</b> · ${E.at ? new Date(E.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · The bot's read plus public Street data, not advice. Check the sources before acting.</p></div>`;
+    <p class="tiny muted" style="margin:12px 0 0;line-height:1.4">From <b>${esc(E.source || "Call Surgeon")}</b> · ${E.at ? new Date(E.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · The bot's read plus public Street data, not advice. Check the sources before acting.</p></div>`;
 }
 async function loadEarnings(d, st) {
   const el = $("#rearn"); if (!el || isFundD(d)) { if (el) el.innerHTML = ""; return; }
@@ -1341,7 +1341,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 9;
+const APP_VERSION = 10;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {

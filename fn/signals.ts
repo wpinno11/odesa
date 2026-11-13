@@ -130,8 +130,9 @@ export async function transcripts(limit = 3) {
     seen[t] = tr.date;
     if (Date.now() - Date.parse(tr.date) > 30 * 86400000) continue;
     const text = String(tr.content).slice(0, 90000);
+    const rules = await kvGet<any>("call_rules", null); const words = rules?.phrases?.length ? rules.phrases.map((p: any) => p.phrase) : KEYWORDS;
     const r = await grokJson(`Read this ${t} earnings call (FY${tr.year} Q${tr.quarter}, ${String(tr.date).slice(0, 10)}). Flag what an investor should notice. ` +
-      `Count mentions of these key words: ${KEYWORDS.join(", ")}. Note tone changes vs. a normal call, anything management avoided, guidance changes and red or green flags. Plain English.\n\n${text}`,
+      `Count mentions of these key words: ${words.join(", ")}.${rules?.text ? " Follow the manager's own rules below first." : ""} Note tone changes vs. a normal call, anything management avoided, guidance changes and red or green flags. Plain English.${rules?.text ? "\n\nMANAGER'S RULES:\n" + String(rules.text).slice(0, 8000) : ""}\n\n${text}`,
       '{"tone":"better|same|worse","headline":"one line","flags":[{"kind":"green|red","text":"","quote":"<=20 words"}],"keywords":[{"word":"","count":0}],"guidance":"raised|held|cut|none"}',
       { model: GROK_FAST, timeoutMs: 90000 });
     if (!r.data) continue;

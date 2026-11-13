@@ -4,6 +4,7 @@
 // (pg_net), like Opal, so it can take a few minutes.
 import { sql, kvGet, kvSet, monthCost } from "./db.ts";
 import { ROIC, GROK_DEEP, parseJson } from "./feeds.ts";
+import { rulesText } from "./inbox.ts";
 
 const SHAPE = `{
 "quarter": "Q3 2026", "report_date": "YYYY-MM-DD", "confidence": "High|Medium|Low",
@@ -60,7 +61,7 @@ export async function start(t: string) {
   const date = String(tr.date ?? "").slice(0, 10);
   const user = `Company: ${t}. Earnings call for fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, held ${date}. Today is ${new Date().toISOString().slice(0, 10)}.\n` +
     `Return JSON matching:\n${SHAPE}\n\nTRANSCRIPT:\n${String(tr.content).slice(0, 110000)}`;
-  const body = { model: GROK_DEEP, input: [{ role: "system", content: SYS }, { role: "user", content: user }], tools: [{ type: "web_search" }], max_turns: 6 };
+  const body = { model: GROK_DEEP, input: [{ role: "system", content: SYS + (await rulesText()) }, { role: "user", content: user }], tools: [{ type: "web_search" }], max_turns: 6 };
   const [req] = await sql`select net.http_post(url := 'https://api.x.ai/v1/responses', body := ${sql.json(body as never)}::jsonb,
       headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'XAI_API_KEY'), 'Content-Type', 'application/json'),
       timeout_milliseconds := 300000) as id`;
@@ -108,7 +109,7 @@ export async function get(t: string, models: { id: number; name: string; holding
       x.models = models.map((m) => { const h = (m.holdings ?? []).find((h: any) => String(h.t).toUpperCase() === tk); return h ? { name: m.name, w: h.w } : null; }).filter(Boolean); }
     // a newer call is out?
     const m = await meta(t); const newer = m.date && cur.call_date && m.date > cur.call_date ? m.date : null;
-    return { status: "done", at: cur.at, call_date: cur.call_date, result: r, newer };
+    return { status: "done", at: cur.at, call_date: cur.call_date, result: r, newer, source: cur.source ?? "Call Surgeon" };
   }
   const m = await meta(t);
   return { status: cur?.status === "error" ? "error" : m.has ? "ready" : "none", error: cur?.error, call_date: m.date, year: m.year, quarter: m.quarter };

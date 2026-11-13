@@ -10,6 +10,7 @@ import * as R from "./research.ts";
 import * as G from "./grow.ts";
 import * as P from "./perf.ts";
 import * as CALLS from "./calls.ts";
+import * as INBOX from "./inbox.ts";
 import { vapid, subscribe, unsubscribe, notify } from "./push.ts";
 
 const ORIGINS = [/^https:\/\/wpinno11\.github\.io$/, /^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
@@ -103,6 +104,13 @@ async function route(c: Ctx): Promise<unknown> {
     return await tick();
   }
 
+  // ---------------- Grok Bot inbox (its own key)
+  if (a === "inbox" && m === "POST") {
+    const key = c.req.headers.get("x-odesa-inbox") ?? ""; const want = await kvGet<string>("inbox_key", "");
+    if (!want || !key || !same(await sha(key), want)) bad("Not allowed.", 403);
+    if (JSON.stringify(c.body ?? {}).length > 900000) bad("Too large.");
+    return await INBOX.receive(c.body);
+  }
   await auth(c.req);
 
   // ---------------- Today
