@@ -9,6 +9,7 @@ import * as OPAL from "./opal.ts";
 import * as R from "./research.ts";
 import * as G from "./grow.ts";
 import * as P from "./perf.ts";
+import * as CALLS from "./calls.ts";
 import { vapid, subscribe, unsubscribe, notify } from "./push.ts";
 
 const ORIGINS = [/^https:\/\/wpinno11\.github\.io$/, /^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/];
@@ -207,6 +208,10 @@ async function route(c: Ctx): Promise<unknown> {
 
   // ---------------- research
   if (a === "stock") return d === "summary" ? await R.summary(String(b), c.q.get("force") === "1") : await R.stock(String(b));
+  if (a === "research" && b && d === "earnings") {
+    if (m === "POST") return await CALLS.start(String(b));
+    return await CALLS.get(String(b), (await sql`select id, name, holdings from odesa.models`) as any);
+  }
   if (a === "research" && b) return d === "street" ? await R.street(String(b)) : await R.profile(String(b));
   if (a === "search") return await R.search(String(c.q.get("q") ?? ""));
 
