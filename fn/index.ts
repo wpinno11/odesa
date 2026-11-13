@@ -105,9 +105,10 @@ async function route(c: Ctx): Promise<unknown> {
   }
 
   // ---------------- Grok Bot inbox (its own key)
-  if (a === "inbox" && m === "POST") {
+  if (a === "inbox" && (m === "POST" || (m === "GET" && b === "universe"))) {
     const key = c.req.headers.get("x-odesa-inbox") ?? ""; const want = await kvGet<string>("inbox_key", "");
     if (!want || !key || !same(await sha(key), want)) bad("Not allowed.", 403);
+    if (m === "GET") return await INBOX.universe();
     if (JSON.stringify(c.body ?? {}).length > 900000) bad("Too large.");
     return await INBOX.receive(c.body);
   }

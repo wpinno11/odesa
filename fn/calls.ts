@@ -24,20 +24,59 @@ const SHAPE = `{
   "why": "why it matters, with numbers from the report"}],
 "down_the_line": [{"ticker": "", "name": "", "relation": "Supplier|Partner|Competitor|Customer", "read": "Good sign|Mixed|Bad sign", "role": "how they're connected, one sentence",
   "what": "what this quarter could mean for them, 1-2 sentences", "fact": "the fact from the report or call it rests on", "url": ""}],
-"notes": ["short data caveats"]
+"notes": ["short data caveats"],
+"flags": [{"kind": "constraint|opportunity|swag|data-quality", "tag": "CAPEX-GUIDE-BREAK", "severity": 4, "weight": 1.0, "quote": "exact words", "speaker": "Name (Role)", "section": "Prepared|Q&A", "vs_prior": "downgrade: last call said ...", "note": "why, with numbers"}],
+"tone_shift": {"prepared": "", "qa": "", "summary": ""},
+"prep": {"score": 3, "exchanges": [{"asked": "analyst (firm): what was asked", "answer": "how it was dodged, short quote"}]},
+"swag": {"score": 3, "baseline_or_shift": "baseline|shift", "quote": "", "note": ""},
+"language_diffs": ["exact phrase changes vs last 1-2 calls"],
+"unsaid": ["last call's hot topic missing, numbers asked and not given"],
+"seeds": ["PATTERN_TAG"],
+"pm_summary": ["6-8 bullets, readable in 90 seconds, no trade recommendation"]
 }`;
 
-const SYS = `You are Call Surgeon, an earnings analyst for an experienced wealth manager. Read the earnings call transcript you are given, then use web search for the
-company's earnings press release / 8-K, consensus estimates (name the source and date for each estimate), segment estimates, and every analyst price-target change in the
-week after the report. Answer ONLY with JSON.
-Rules:
-1. Results: the reported actuals vs consensus. If no estimate exists say null; never invent one. Mark figures you calculated from the 8-K as derived=true.
-2. What drove it: business segments ranked by dollar surprise vs estimate (or by size if no estimates).
-3. Price targets: the top ~20 firms first; from→to and date; count raised, cut and kept.
-4. From the call: 4-6 items, a mix of challenges and opportunities. The quote MUST be copied exactly from the transcript (no edits, no ellipses). Say who said it.
-   Look hard for things management glossed over, guidance that quietly changed vs prior calls, one-time items, and numbers that don't add up.
-5. Down the line: 3-6 other US-listed companies affected (suppliers, partners, competitors, customers), each tied to a specific fact.
-6. Short words, numbers over adjectives. This is research for a professional, not advice.`;
+const SYS = `You are Call Surgeon, the forensic transcript and language quant for Odessa Fund (Odessa Research Stack, Bot 1), working inside the Odesa app.
+You do not summarize earnings calls. You extract tradable LANGUAGE signals: constraints, specific opportunities, strains, tone shifts, vague or underprepared answers,
+and swagger that is new or mismatched to the numbers. You never pick stocks, build ladders, or give trades, price targets of your own, options structures or sizing.
+Answer ONLY with JSON.
+
+HARD RULES (v0.5)
+1. Every flag needs an exact quote (copied from the transcript, no edits, no ellipses), speaker, role, section (Prepared / Q&A), and date.
+2. Prefer the delta against the SAME speaker's last 1-2 appearances over raw sentiment. Mark each flag vs prior: same / upgrade / downgrade / first mention / shift / math step-down / first quantified.
+   Use web search to read the prior quarter's call for the same speakers. If you couldn't re-read it, write "not re-verified" and lower confidence.
+3. Split Prepared Remarks and Q&A. Never blend them into one tone score. The tone_shift describes each separately.
+4. Generic TAM, "huge opportunity", "we're excited" is never an opportunity. An opportunity must be specific: named product, node, region, customer type, MW, $ amount or timeline.
+5. Swag is a flag only when it's a shift from that executive's baseline or doesn't match the numbers or the Q&A detail. A CEO claim the CFO doesn't echo is itself a flag.
+6. Never invent suppliers, numbers, price targets or trades. Use null when a source doesn't state a number; never zero, never an estimate.
+7. When two figures for the same item conflict inside one source, use neither: add a data-quality TRANSCRIPT-DISCREPANCY flag and a caveat.
+8. Third-party transcripts: use speaker-attributed text only; ignore inserted summaries; note transcription artifacts as caveats.
+9. Results, segments and guidance come only from the 8-K / press release, the 10-Q if available, and the transcripts. "derived" only when every input is a stated figure.
+
+WHAT YOU SCORE
+A. Constraints / strains: lead time, allocation, qualification, yield, capacity, labor, permitting, interconnect, power, transformers, switchgear, substrate, HBM, packaging,
+   cooling, water, turbines, "cannot energize", "warm shells", push-outs, destock, double-order, cancellations, pricing giveback; capex guide raised or broken vs last call;
+   free-cash-flow pressure; metrics withdrawn ("not planning to share"); timeline slips and goalpost shifts (a later date or slower cadence is "lowered"); candid admissions
+   ("to be honest, we're missing", "not perfect"); customer-bandwidth gates; one-time benefits in the base; related-party / cross-book income; governance conflicts;
+   guide trims and hedged guides; mix-shift margin headwinds; FX masking a structural cause; customer concentration.
+B. Specific opportunities: named demand, share gains with evidence, pricing power, new qualified capacity with a date, guide raises and new hard numeric guides,
+   named customer / MW / $ / timeline specifics, supply leaned in ahead of demand.
+C. Language downgrades (moving right = weaker): exceptional > strong > solid > in line > consistent with; expect > anticipate > hope to > working toward;
+   robust demand > healthy > stable > mixed.
+D. Preparation / vagueness: restates the script; ends on "we'll have to see"; answers a number with a strategy paragraph; high hedges and zero numbers; off-topic pivot;
+   jokes on a serious constraint question. Quote the 2-4 worst exchanges. Prep score 1-5 (5 = evasive).
+E. Swag: superlatives in Q&A not in the script; unprompted TAM; "no one else can"; long answers with low numeric density. Score 1-5 and say baseline or shift.
+F. Analyst pressure / unsaid: topics asked by 3+ analysts; topics deferred; last call's hot topic that vanished; numbers asked for and not given; an exec missing vs last call.
+Numbers that don't reconcile are high value: operating vs net income, CEO claim vs CFO guide, call vs filing wording, segment vs total confusion, share-count changes.
+
+SEVERITY (constraint flags): 5 = binding/structural; 4 = breaks a prior guide or promise; 3 = material but bounded (earnings quality, governance, concentration);
+2 = watch item (FX, mix, fluid tariffs); 1 = minor/context.
+SOURCE WEIGHTS: earnings call 1.00; investor day 0.90; bank conference 0.85; named exec interview 0.80; utility/PUC filing 0.75; 8-K/10-Q 0.70; LEAK_PUB 0.65;
+official X 0.45; C-suite X 0.40; other officers X 0.20; replies/anonymous 0.00 (never). High confidence needs weight >= 0.80, or >= 0.65 plus a confirming source >= 0.70.
+
+STREET LAYER (Odesa adds this, kept separate from your language read): use web search for consensus estimates (name the source and date for each), segment estimates,
+and every analyst price-target change in the week after the report. Never let Street data change a language flag.
+Ranking: constraint flags by severity then weight; opportunities by how hard the number is (CFO guide > CEO claim) then size; segments by revenue.
+Research for a professional, not advice.`;
 
 const norm = (s: string) => String(s ?? "").toLowerCase().replace(/[‘’“”"'`]/g, "").replace(/[–—]/g, "-").replace(/[^a-z0-9$%.\-]+/g, " ").replace(/\s+/g, " ").trim();
 
@@ -61,7 +100,7 @@ export async function start(t: string) {
   const date = String(tr.date ?? "").slice(0, 10);
   const user = `Company: ${t}. Earnings call for fiscal ${tr.year ?? ""} Q${tr.quarter ?? ""}, held ${date}. Today is ${new Date().toISOString().slice(0, 10)}.\n` +
     `Return JSON matching:\n${SHAPE}\n\nTRANSCRIPT:\n${String(tr.content).slice(0, 110000)}`;
-  const body = { model: GROK_DEEP, input: [{ role: "system", content: SYS + (await rulesText()) }, { role: "user", content: user }], tools: [{ type: "web_search" }], max_turns: 6 };
+  const body = { model: GROK_DEEP, input: [{ role: "system", content: SYS + (await rulesText(true)) }, { role: "user", content: user }], tools: [{ type: "web_search" }], max_turns: 6 };
   const [req] = await sql`select net.http_post(url := 'https://api.x.ai/v1/responses', body := ${sql.json(body as never)}::jsonb,
       headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'XAI_API_KEY'), 'Content-Type', 'application/json'),
       timeout_milliseconds := 300000) as id`;
@@ -96,6 +135,7 @@ export async function get(t: string, models: { id: number; name: string; holding
         // quotes must appear word-for-word in the transcript
         const T = norm(cur.transcript ?? "");
         for (const c of r.call ?? []) { const q = norm(c.quote); c.verified = q.length > 12 && T.includes(q); if (!c.verified) c.quote_unverified = c.quote, c.quote = null; }
+        for (const f of r.flags ?? []) { const q = norm(f.quote); f.verified = q.length > 8 && T.includes(q); if (!f.verified) f.quote_unverified = f.quote, f.quote = null; }
         r.citations = cites.filter((c, i) => cites.findIndex((x) => x.url === c.url) === i).slice(0, 25);
         cur = { status: "done", at: new Date().toISOString(), call_date: cur.call_date, year: cur.year, quarter: cur.quarter, cost, result: r };
       }

@@ -1152,7 +1152,33 @@ function tabHtml(d, tab) {
 }
 
 // ---------------------------------------------------------------- Earnings breakdown (Call Surgeon)
-const ETABS = [["res", "Results"], ["drv", "What drove it"], ["tgt", "Price targets"], ["call", "From the call"], ["down", "Down the line"]];
+const ETABS = [["res", "Results"], ["drv", "What drove it"], ["tgt", "Price targets"], ["call", "From the call"], ["tone", "Flags & tone"], ["down", "Down the line"]];
+const hasTone = (r) => !!((r.flags || []).length || r.tone_shift || r.prep || r.swag || (r.language_diffs || []).length || (r.unsaid || []).length || (r.pm_summary || []).length);
+function toneTab(r) {
+  const T = r.tone_shift; const sev = (n) => n ? `<span title="severity ${n} of 5" style="letter-spacing:1px;color:${n >= 4 ? "var(--down)" : n >= 3 ? "var(--amber)" : "var(--gray2)"}">${"●".repeat(n)}<span style="color:#E3E4E7">${"●".repeat(Math.max(0, 5 - n))}</span></span>` : "";
+  // flags may come as {kind, tag, severity} or Call Surgeon's native {type: "constraint:TAG", note: "... Severity 4."}
+  const F = (r.flags || []).map((f) => { const ty = String(f.type || ""); const kind = f.kind || (ty.split(":")[0] || "constraint"); const tag = f.tag || ty.split(":")[1] || "";
+    const sv = Number(f.severity) || Number((String(f.note || "").match(/severity\s*(\d)/i) || [])[1]) || null; return { ...f, kind, tag, sev: sv }; });
+  const group = (k, label, col) => { const xs = F.filter((f) => f.kind === k).sort((a, b) => (b.sev || 0) - (a.sev || 0) || (b.weight || 0) - (a.weight || 0)); if (!xs.length) return "";
+    return `<div class="eyebrow" style="margin-top:16px;color:${col}">${label} (${xs.length})</div>${xs.map((f) => `<div style="padding:10px 0;border-bottom:1px solid var(--line)">
+      <div class="row" style="gap:8px;flex-wrap:wrap">${f.tag ? `<span class="pill" style="background:var(--soft);font-family:ui-monospace,Menlo,monospace;font-size:11px">${esc(f.tag)}</span>` : ""}${sev(f.sev)}${f.weight !== undefined && f.weight !== null ? `<span class="tiny muted">w=${Number(f.weight).toFixed(2)}</span>` : ""}</div>
+      ${f.quote ? `<div style="font-size:14px;line-height:1.45;margin-top:6px">“${esc(f.quote)}”</div>` : f.quote_unverified ? `<div class="tiny muted" style="font-style:italic;margin-top:6px">Quote left out: couldn't be matched word-for-word to the transcript.</div>` : ""}
+      <div class="tiny muted" style="margin-top:4px;line-height:1.4">${[f.speaker, f.section].filter(Boolean).map(esc).join(" · ")}${f.vs_prior ? ` · <b style="color:var(--ink)">vs prior:</b> ${esc(f.vs_prior)}` : ""}</div>
+      ${f.note ? `<div class="small" style="margin-top:4px;line-height:1.45;color:var(--gray)">${esc(f.note)}</div>` : ""}</div>`).join("")}`; };
+  const list = (title, xs) => (xs || []).length ? `<div class="eyebrow" style="margin-top:16px">${title}</div><ul class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.5">${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+  const P = r.prep || {}, S = r.swag || {};
+  return `<div class="eyebrow" style="margin-top:14px">Call Surgeon's read <span style="text-transform:none;letter-spacing:0;font-weight:500;font-style:italic">Language signals, scored against the same speakers' last call</span></div>
+    ${P.score || S.score ? `<div class="grid2" style="margin-top:10px">${P.score ? `<div style="background:var(--soft);border-radius:12px;padding:10px 12px"><div class="tiny muted" style="font-weight:700">PREP / VAGUENESS</div><div class="n" style="font-size:22px;font-weight:700">${P.score}<span class="small muted">/5</span></div><div class="tiny muted">5 = evasive</div></div>` : ""}
+      ${S.score ? `<div style="background:var(--soft);border-radius:12px;padding:10px 12px"><div class="tiny muted" style="font-weight:700">SWAG VS SUBSTANCE</div><div class="n" style="font-size:22px;font-weight:700">${S.score}<span class="small muted">/5</span></div><div class="tiny muted">${esc(S.baseline_or_shift || "")}</div></div>` : ""}</div>` : ""}
+    ${T ? `<div style="margin-top:12px;border-left:3px solid var(--brass);padding:2px 0 2px 12px">${typeof T === "string" ? `<div class="small" style="line-height:1.5">${esc(T)}</div>`
+      : `${T.prepared ? `<div class="small" style="line-height:1.5"><b>Prepared:</b> ${esc(T.prepared)}</div>` : ""}${T.qa ? `<div class="small" style="line-height:1.5;margin-top:4px"><b>Q&A:</b> ${esc(T.qa)}</div>` : ""}${T.summary ? `<div class="small muted" style="line-height:1.5;margin-top:4px">${esc(T.summary)}</div>` : ""}`}</div>` : ""}
+    ${group("constraint", "Constraint flags", "var(--down)")}${group("opportunity", "Opportunity flags", "var(--up)")}${group("swag", "Swag", "var(--amber)")}${group("data-quality", "Data quality", "var(--gray)")}
+    ${(P.exchanges || []).length ? `<div class="eyebrow" style="margin-top:16px">Worst exchanges</div>${P.exchanges.map((x) => `<div class="small" style="padding:8px 0;border-bottom:1px solid var(--line);line-height:1.45"><b>${esc(x.asked || "")}</b><br><span class="muted">${esc(x.answer || "")}</span></div>`).join("")}` : ""}
+    ${S.quote ? `<div class="small" style="margin-top:12px;line-height:1.45"><b>Swag:</b> “${esc(S.quote)}”${S.note ? ` <span class="muted">${esc(S.note)}</span>` : ""}</div>` : ""}
+    ${list("Language changes vs last call", r.language_diffs)}${list("Unsaid", r.unsaid)}
+    ${(r.seeds || []).length ? `<div class="eyebrow" style="margin-top:16px">Pattern seeds</div><div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px">${r.seeds.map((x) => `<span class="pill" style="background:var(--soft);font-family:ui-monospace,Menlo,monospace;font-size:11px">${esc(x)}</span>`).join("")}</div>` : ""}
+    ${(r.pm_summary || []).length ? `<div style="margin-top:16px;background:#F3F5F8;border-radius:12px;padding:12px 14px"><div class="eyebrow">PM summary · 90 seconds</div><ul class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.5">${r.pm_summary.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}`;
+}
 const cardGrid = (html) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:10px;margin-top:10px">${html}</div>`;
 const srcLink = (label, url) => url && safeUrl(url) ? `<a href="${esc(safeUrl(url))}" target="_blank" rel="noopener" style="color:inherit">${esc(label)}</a>` : esc(label || "");
 function earnSection(d, E, tab) {
@@ -1198,6 +1224,8 @@ function earnSection(d, E, tab) {
         ${x.quote ? `<div style="font-size:14px;line-height:1.45;margin-top:8px">“${esc(x.quote)}”</div>` : `<div class="tiny muted" style="margin-top:6px;font-style:italic">Quote left out: it couldn't be matched word-for-word to the transcript.</div>`}
         ${x.speaker ? `<div class="tiny muted" style="margin-top:4px">${esc(x.speaker)}</div>` : ""}
         ${x.why ? `<div class="small" style="margin-top:8px;line-height:1.45"><b>Why it matters:</b> ${esc(x.why)}</div>` : ""}</div>`; }).join("") || `<div class="empty">Nothing flagged.</div>`)}`;
+  } else if (tab === "tone") {
+    body = hasTone(r) ? toneTab(r) : `<div class="empty">Call Surgeon's flags and tone read aren't on this breakdown yet. They come with new breakdowns.</div>`;
   } else {
     const readCol = (x) => /good/i.test(x) ? ["#E6F2E9", "var(--up)"] : /bad/i.test(x) ? ["#FBE9E6", "var(--down)"] : ["#FDF1DE", "var(--amber)"];
     body = `<div class="eyebrow" style="margin-top:14px">What this could mean down the line <span style="text-transform:none;letter-spacing:0;font-weight:500;font-style:italic">Possible read-throughs, not predictions or advice</span></div>
@@ -1215,7 +1243,7 @@ function earnSection(d, E, tab) {
       <span class="small muted">${esc(d.name)} · ${esc(r.quarter || "")} earnings${E.call_date ? " · " + F.date(E.call_date) : ""}${r.confidence ? ` · Confidence <b style="color:var(--ink)">${esc(r.confidence)}</b>` : ""}</span></div>
     ${r.headline ? `<div style="font-size:17px;font-weight:700;line-height:1.35;margin-top:10px">${esc(r.headline)}</div>` : ""}
     ${r.verdict ? `<div style="font-size:15px;line-height:1.45;margin-top:6px"><b>Verdict:</b> ${esc(r.verdict)}</div>` : ""}
-    <div class="chips" style="padding:12px 0 0;margin:0 -16px;padding-left:16px">${ETABS.map(([k, l]) => `<button class="chip ${tab === k ? "on" : ""}" data-et="${k}">${l}</button>`).join("")}</div>
+    <div class="chips" style="padding:12px 0 0;margin:0 -16px;padding-left:16px">${ETABS.filter(([k]) => k !== "tone" || hasTone(r)).map(([k, l]) => `<button class="chip ${tab === k ? "on" : ""}" data-et="${k}">${l}</button>`).join("")}</div>
     ${body}
     ${notes.length ? `<details style="margin-top:14px;background:var(--amber-l);border-radius:12px;padding:10px 12px"><summary class="small" style="cursor:pointer;font-weight:600">Notes on the data (${notes.length})</summary><ul class="tiny" style="margin:8px 0 0;padding-left:18px;line-height:1.5">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></details>` : ""}
     <p class="tiny muted" style="margin:12px 0 0;line-height:1.4">From <b>${esc(E.source || "Call Surgeon")}</b> · ${E.at ? new Date(E.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · The bot's read plus public Street data, not advice. Check the sources before acting.</p></div>`;
@@ -1341,7 +1369,7 @@ function route() {
   vToday();
 }
 window.addEventListener("hashchange", route);
-const APP_VERSION = 10;
+const APP_VERSION = 11;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
 // If a newer version is published, reload once so the phone never keeps an old copy.
 fetch("version.json?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).then((v) => {
